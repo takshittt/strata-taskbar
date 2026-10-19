@@ -31,7 +31,7 @@ swift test                                    # unit tests (Swift Testing; fall 
 swift test --filter <TestName>                # single test
 log stream --predicate 'process == "Strata"'  # view logs
 tccutil reset Accessibility local.strata.Strata  # re-test first-launch permission flow
-codesign -dv build/Strata.app                 # should show Authority=Strata Dev
+codesign -dvv build/Strata.app                # should show Authority=Strata Dev
 ```
 
 **Signing matters.** The Accessibility grant is tied to the code signature, so every build must be signed with the self-signed **"Strata Dev"** certificate. Ad-hoc signing (`-s -`) makes macOS forget the permission after each rebuild. `SMAppService` (launch at login) also works only from the real `.app` bundle, not from the `swift build` binary.
