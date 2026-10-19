@@ -6,12 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Strata** is a Windows-style taskbar for macOS: one button per window, pinned apps, a Start button, window snapping, custom zones.
 
-Phase 0 (workspace + signing) is done; the app is still a placeholder `main.swift`. Read the planning docs before starting work:
+Phases 0–1 are done: signed `.app` build, accessory app skeleton, Accessibility permission flow, AX wrappers and `ScreenGeometry`. Read the planning docs before starting work:
 - [.claude/docs/intent.md](.claude/docs/intent.md): what the app does and why (user-facing)
 - [.claude/docs/spec.md](.claude/docs/spec.md): stack, system APIs per feature, architecture, signing, testing. `§` references in the plan point here.
 - [.claude/docs/plans.md](.claude/docs/plans.md): 15 build phases (0–14), done in order, each with a "✅ Done when" checklist. Don't start a phase until the previous one's checklist passes, and commit at the end of each phase.
 
-Layout so far: `Package.swift` (tools 5.9 → Swift 5 mode, one executable target), `Sources/Strata/`, `Resources/Info.plist` (copied verbatim into the bundle), `scripts/build-app.sh`. Keep this file in sync with the real commands and layout as phases land.
+Layout so far: `Package.swift` (tools 5.9 → Swift 5 mode, one executable target), `Sources/Strata/` (`main.swift`, `AppDelegate.swift`, `AX.swift` with `AX` + `ScreenGeometry`, `Log.swift`), `Resources/Info.plist` (copied verbatim into the bundle), `scripts/build-app.sh`. Keep this file in sync with the real commands and layout as phases land.
 
 ## Stack and constraints
 
@@ -19,7 +19,7 @@ Layout so far: `Package.swift` (tools 5.9 → Swift 5 mode, one executable targe
 - macOS 14+, universal `arm64` + `x86_64` (the universal build only arrives in Phase 14).
 - AppKit for the bar (`NSPanel`, custom `NSView`s). SwiftUI, hosted in `NSWindow`, for the Settings and Zone Editor windows. Combine for shared state.
 - `LSUIElement = true`, accessory activation policy: no Dock icon and no menu bar. Windows the app shows (Settings) must call `NSApp.activate()` first.
-- Bundle ID is `local.strata.Strata`. Logs use `NSLog` with the prefix `Strata:`.
+- Bundle ID is `local.strata.Strata`. Log through `Log.info` / `Log.error` (os.Logger, prefix `Strata:`), not `NSLog`: NSLog's text shows as `<private>` in the unified log.
 - The App Sandbox is **off**, because AX control of other apps needs that. That rules out the Mac App Store.
 
 ## Commands (see spec §6; `swift test` arrives with tests in Phase 14)
@@ -29,7 +29,8 @@ swift build                                   # dev build
 scripts/build-app.sh [--open]                 # arm64 debug build → build/Strata.app → codesign "Strata Dev"
 swift test                                    # unit tests (Swift Testing; fall back to XCTest if unavailable under CLT)
 swift test --filter <TestName>                # single test
-log stream --predicate 'process == "Strata"'  # view logs
+/usr/bin/log stream --predicate 'process == "Strata"'  # view logs (full path: zsh has a `log` builtin)
+pkill -x Strata                               # quit (no menu or Dock icon until Phase 6)
 tccutil reset Accessibility local.strata.Strata  # re-test first-launch permission flow
 codesign -dvv build/Strata.app                # should show Authority=Strata Dev
 ```
