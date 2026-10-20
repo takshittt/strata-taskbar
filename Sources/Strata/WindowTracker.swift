@@ -53,6 +53,8 @@ final class WindowTracker {
     /// When each previously listed window was first missed, for the brief gap during minimise animations.
     private var missingSince: [CGWindowID: CFAbsoluteTime] = [:]
     private static let missingGrace: CFAbsoluteTime = 1
+    /// Off-screen windows already searched for by `offSpaceFullScreenWindows`.
+    private var probed = Set<CGWindowID>()
     private var refreshPending = false
     private var pollTimer: Timer?
 
@@ -147,8 +149,10 @@ final class WindowTracker {
                 let subrole = AX.string(element, kAXSubroleAttribute)
                 guard subrole == kAXStandardWindowSubrole || subrole == kAXDialogSubrole else { continue }
                 let minimized = AX.bool(element, kAXMinimizedAttribute) ?? false
+                let fullScreen = AX.bool(element, "AXFullScreen") ?? false
                 // Windows on other Spaces aren't on screen; minimised windows and hidden apps never are.
-                guard onScreen.contains(id) || minimized || hidden else { continue }
+                // A full-screen window has a Space of its own and stays listed, as on Windows.
+                guard onScreen.contains(id) || minimized || hidden || fullScreen else { continue }
 
                 if let observation, !observation.windowIDs.contains(id) {
                     observe(window: element, id: id, in: observation)
@@ -160,7 +164,7 @@ final class WindowTracker {
                     title: AX.string(element, kAXTitleAttribute) ?? "",
                     isMinimized: minimized,
                     isAppHidden: hidden,
-                    isFullScreen: AX.bool(element, "AXFullScreen") ?? false,
+                    isFullScreen: fullScreen,
                     frame: AX.frame(element) ?? .zero
                 ))
             }
@@ -168,8 +172,22 @@ final class WindowTracker {
 
         // During a minimise animation a window can vanish from AX and the screen for a moment.
         // Keep a still-existing window for a short grace period so its button doesn't flicker.
-        let alive = Self.allWindowIDs()
+        let all = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        let alive = Self.windowIDs(all as CFArray)
         var ids = Set(found.map(\.id))
+        probed.formIntersection(alive)
+        found += offSpaceFullScreenWindows(all, onScreen: onScreen, known: ids)
+        ids = Set(found.map(\.id))
+        // AX usually leaves a full-screen window out of its app's windows while another Space is showing.
+        // Keep a known one as long as it exists and still says it's full screen.
+        for old in windows where !ids.contains(old.id) && alive.contains(old.id)
+            && AX.bool(old.ref.element, "AXFullScreen") == true {
+            var window = old
+            window.title = AX.string(old.ref.element, kAXTitleAttribute) ?? old.title
+            window.isFullScreen = true
+            found.append(window)
+            ids.insert(window.id)
+        }
         for id in ids { missingSince[id] = nil }
         for old in windows where !ids.contains(old.id) && alive.contains(old.id) && inGracePeriod(old.id, now: started) {
             found.append(old)
@@ -194,6 +212,47 @@ final class WindowTracker {
         didChange.send()
     }
 
+    /// Full-screen windows that were already on another Space when the app launched or Strata started.
+    /// Each candidate is looked up once; after that it is a known window and kept above.
+    private func offSpaceFullScreenWindows(_ all: [[String: Any]], onScreen: Set<CGWindowID>, known: Set<CGWindowID>) -> [TrackedWindow] {
+        // Full screen fills the display's width, and its height less the notch strip on displays that have one.
+        let screens = NSScreen.screens.map(\.frame.size)
+        func fillsScreen(_ size: CGSize) -> Bool {
+            screens.contains { $0.width == size.width && size.height <= $0.height && size.height >= $0.height - 80 }
+        }
+        var candidates: [pid_t: Set<CGWindowID>] = [:]
+        for info in all where (info[kCGWindowLayer as String] as? Int) == 0 {
+            guard let id = info[kCGWindowNumber as String] as? CGWindowID,
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t,
+                  !onScreen.contains(id), !known.contains(id), !windows.contains(where: { $0.id == id }),
+                  !probed.contains(id),
+                  let boundsInfo = info[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsInfo),
+                  fillsScreen(bounds.size) else { continue }
+            probed.insert(id)
+            candidates[pid, default: []].insert(id)
+        }
+        var result: [TrackedWindow] = []
+        for (pid, ids) in candidates {
+            guard let app = NSRunningApplication(processIdentifier: pid), app.activationPolicy == .regular,
+                  pid != getpid() else { continue }
+            for (id, element) in AX.offSpaceWindows(pid: pid, ids: ids)
+            where AX.bool(element, "AXFullScreen") == true && AX.string(element, kAXSubroleAttribute) == kAXStandardWindowSubrole {
+                result.append(TrackedWindow(
+                    ref: WindowRef(id: id, pid: pid, element: element),
+                    bundleID: app.bundleIdentifier,
+                    appName: app.localizedName ?? "",
+                    title: AX.string(element, kAXTitleAttribute) ?? "",
+                    isMinimized: false,
+                    isAppHidden: app.isHidden,
+                    isFullScreen: true,
+                    frame: AX.frame(element) ?? .zero
+                ))
+            }
+        }
+        return result
+    }
+
     private func inGracePeriod(_ id: CGWindowID, now: CFAbsoluteTime) -> Bool {
         guard let since = missingSince[id] else {
             // First miss: keep it, and look again once the grace period is over.
@@ -202,11 +261,6 @@ final class WindowTracker {
             return true
         }
         return now - since < Self.missingGrace
-    }
-
-    /// Layer-0 window IDs on any Space.
-    private static func allWindowIDs() -> Set<CGWindowID> {
-        windowIDs(CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID))
     }
 
     /// Layer-0 window IDs on screen right now. Reads only number and layer: no Screen Recording needed.

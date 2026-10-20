@@ -169,7 +169,7 @@ class BarItemView: NSView {
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha)
     }
 
-    var iconSize: CGFloat { min(22, (bounds.height - 8).rounded()) }
+    var iconSize: CGFloat { min(CGFloat(Settings.shared.iconSize), (bounds.height - 8).rounded()) }
 }
 
 /// Reads files dragged onto the bar.

@@ -50,6 +50,10 @@ struct SettingsView: View {
                     Slider(value: $settings.barHeight, in: 28...64, step: 1)
                     Text("\(Int(settings.barHeight)) pt").monospacedDigit().frame(width: 44, alignment: .trailing)
                 }
+                LabeledContent("Icon size") {
+                    Slider(value: $settings.iconSize, in: 14...48, step: 1)
+                    Text("\(Int(settings.iconSize)) pt").monospacedDigit().frame(width: 44, alignment: .trailing)
+                }
                 LabeledContent("Text size") {
                     Slider(value: $settings.fontSize, in: 10...16, step: 1)
                     Text("\(Int(settings.fontSize)) pt").monospacedDigit().frame(width: 44, alignment: .trailing)

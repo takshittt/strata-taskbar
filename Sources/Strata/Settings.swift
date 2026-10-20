@@ -67,6 +67,8 @@ final class Settings: ObservableObject {
     @Published var startAction: StartAction { didSet { store("startAction", startAction.rawValue) } }
     @Published var barHeight: Double { didSet { store("barHeight", barHeight) } }
     @Published var fontSize: Double { didSet { store("fontSize", fontSize) } }
+    /// Largest icon size; icons still shrink to fit a shorter bar.
+    @Published var iconSize: Double { didSet { store("iconSize", iconSize) } }
     @Published var opacity: Double { didSet { store("opacity", opacity) } }
     @Published var windowGap: Double { didSet { store("windowGap", windowGap) } }
     @Published var showTitles: Bool { didSet { store("showTitles", showTitles) } }
@@ -92,6 +94,7 @@ final class Settings: ObservableObject {
         startAction = choice("startAction", .appsMenu)
         barHeight = value("barHeight", 40)
         fontSize = value("fontSize", 12)
+        iconSize = value("iconSize", 22)
         opacity = value("opacity", 1)
         windowGap = value("windowGap", 0)
         showTitles = value("showTitles", true)

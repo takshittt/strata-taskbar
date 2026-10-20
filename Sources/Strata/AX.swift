@@ -5,6 +5,11 @@ import ApplicationServices
 @_silgen_name("_AXUIElementGetWindow")
 private func _AXUIElementGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
 
+// Private as well: makes an element from a remote token, which reaches windows on other Spaces that
+// kAXWindowsAttribute leaves out. Only `AX.offSpaceWindows` uses it.
+@_silgen_name("_AXUIElementCreateWithRemoteToken")
+private func _AXUIElementCreateWithRemoteToken(_ token: CFData) -> Unmanaged<AXUIElement>?
+
 /// Typed wrappers over the Accessibility C API (spec §3.1).
 enum AX {
     /// Keeps one hung app from freezing the bar.
@@ -21,6 +26,24 @@ enum AX {
         let element = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(element, messagingTimeout)
         return element
+    }
+
+    /// Finds the app's windows with the given IDs by trying its element IDs in turn, for windows on other Spaces.
+    static func offSpaceWindows(pid: pid_t, ids: Set<CGWindowID>) -> [CGWindowID: AXUIElement] {
+        var found: [CGWindowID: AXUIElement] = [:]
+        // Token: pid, 0, "coco", then the element ID.
+        var token = Data(count: 20)
+        token.withUnsafeMutableBytes { bytes in
+            bytes.storeBytes(of: pid, toByteOffset: 0, as: Int32.self)
+            bytes.storeBytes(of: 0x636f_636f, toByteOffset: 8, as: Int32.self)
+        }
+        for elementID: UInt64 in 0..<1000 where found.count < ids.count {
+            token.withUnsafeMutableBytes { $0.storeBytes(of: elementID, toByteOffset: 12, as: UInt64.self) }
+            guard let element = _AXUIElementCreateWithRemoteToken(token as CFData)?.takeRetainedValue() else { continue }
+            AXUIElementSetMessagingTimeout(element, messagingTimeout)
+            if let id = windowID(element), ids.contains(id) { found[id] = element }
+        }
+        return found
     }
 
     // MARK: Reading
