@@ -73,6 +73,8 @@ final class Settings: ObservableObject {
     @Published var groupByApp: Bool { didSet { store("groupByApp", groupByApp) } }
     @Published var avoidBarOverlap: Bool { didSet { store("avoidBarOverlap", avoidBarOverlap) } }
     @Published var hotKeysEnabled: Bool { didSet { store("hotKeysEnabled", hotKeysEnabled) } }
+    /// ⌃⌥1–9 open the pinned apps.
+    @Published var appHotKeysEnabled: Bool { didSet { store("appHotKeysEnabled", appHotKeysEnabled) } }
     @Published var pinnedBundleIDs: [String] { didSet { store("pinnedBundleIDs", pinnedBundleIDs) } }
     @Published var hiddenBundleIDs: [String] { didSet { store("hiddenBundleIDs", hiddenBundleIDs) } }
 
@@ -96,6 +98,7 @@ final class Settings: ObservableObject {
         groupByApp = value("groupByApp", true)
         avoidBarOverlap = value("avoidBarOverlap", true)
         hotKeysEnabled = value("hotKeysEnabled", true)
+        appHotKeysEnabled = value("appHotKeysEnabled", true)
         pinnedBundleIDs = value("pinnedBundleIDs", Settings.defaultPins)
         hiddenBundleIDs = value("hiddenBundleIDs", [])
     }
@@ -113,6 +116,21 @@ final class Settings: ObservableObject {
     func pin(_ bundleID: String) {
         guard !isPinned(bundleID) else { return }
         pinnedBundleIDs.append(bundleID)
+    }
+
+    /// Pins apps before the pin at `index` (at the end when `nil`); ones already pinned move there.
+    func pin(_ bundleIDs: [String], at index: Int?) {
+        pinnedBundleIDs = Self.inserting(bundleIDs, into: pinnedBundleIDs, at: index)
+    }
+
+    static func inserting(_ bundleIDs: [String], into list: [String], at index: Int?) -> [String] {
+        var unique: [String] = []
+        for bundleID in bundleIDs where !unique.contains(bundleID) { unique.append(bundleID) }
+        let index = min(index ?? list.count, list.count)
+        // Count only the pins that stay put, so moving an app onto its own slot leaves it there.
+        var result = list.filter { !unique.contains($0) }
+        result.insert(contentsOf: unique, at: list[..<index].filter { !unique.contains($0) }.count)
+        return result
     }
 
     func unpin(_ bundleID: String) {

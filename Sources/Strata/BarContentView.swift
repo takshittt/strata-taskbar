@@ -45,6 +45,7 @@ final class BarContentView: NSView {
         addSubview(background)
         separator.autoresizingMask = [.width, .minYMargin]
         addSubview(separator)
+        registerForDraggedTypes([.fileURL])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -272,6 +273,30 @@ final class BarContentView: NSView {
             update(pinned: pending.pinned, windows: pending.windows, focusedID: pending.focusedID,
                    needsPermission: pending.needsPermission)
         }
+    }
+
+    // MARK: Dropping apps to pin them
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        DroppedFiles.appBundleIDs(DroppedFiles.urls(sender)) == nil ? [] : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let bundleIDs = DroppedFiles.appBundleIDs(DroppedFiles.urls(sender)) else { return false }
+        pin(bundleIDs, at: nil)
+        return true
+    }
+
+    /// Pins apps in front of the pinned slot holding `item`, or at the end.
+    func pin(_ bundleIDs: [String], at item: BarItemView?) {
+        let settings = Settings.shared
+        var index: Int?
+        if let item, let unit = units.first(where: { $0.items.contains { $0 === item } }),
+           case .pinned(let bundleID) = unit.kind {
+            index = settings.pinnedBundleIDs.firstIndex(of: bundleID)
+        }
+        Log.info("pinning \(bundleIDs) at \(index.map(String.init) ?? "end")")
+        settings.pin(bundleIDs, at: index)
     }
 
     // MARK: Hooks used by items

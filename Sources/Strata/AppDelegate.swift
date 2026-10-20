@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch target {
             case .snap(let action): WindowMover.perform(action)
             case .zone(let display, let zone): WindowMover.moveFocused(toZone: zone, display: display)
+            case .pinnedApp(let number): WindowActions.activatePinned(number)
             }
         }
         HotKeys.shared.start()

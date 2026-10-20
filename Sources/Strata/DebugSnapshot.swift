@@ -5,7 +5,9 @@ import AppKit
 /// "local.strata.debug.snapshot") makes each bar render itself to /tmp/strata-bar-<n>.png.
 /// Lets bar layout be checked without Screen Recording permission.
 /// "local.strata.debug.click" with object "<bar>:<item>[:middle]" runs that item's click handler,
-/// so actions can be tested without moving the user's mouse. ":menu" logs the item's context menu instead.
+/// so actions can be tested without moving the user's mouse. ":menu" logs the item's context menu instead;
+/// ":drop:<path>" acts as if that file, folder or app had been dropped on the item; ":shift" shift-clicks;
+/// ":spring" acts as if a drag had been held over the item.
 enum DebugSnapshot {
     private static func describe(_ menu: NSMenu?) -> String {
         (menu?.items ?? []).map { item in
@@ -41,6 +43,11 @@ enum DebugSnapshot {
                 let steps = max(1, Int(abs(dx) / 10))
                 for step in 1...steps { bar.continueDrag(items[i], atX: startX + dx * CGFloat(step) / CGFloat(steps)) }
                 bar.endDrag(items[i])
+            case "drop":
+                let path = parts.dropFirst(3).joined(separator: ":")
+                if !items[i].drop([URL(fileURLWithPath: path)]) { Log.info("item refuses drops") }
+            case "shift": items[i].shiftClick()
+            case "spring": items[i].springLoaded()
             case "menu":
                 let menu = items[i].contextMenu()
                 if parts.count > 3, let n = Int(parts[3]), let item = menu?.items[safe: n] {

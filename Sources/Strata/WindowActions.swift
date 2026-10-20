@@ -70,6 +70,42 @@ extension WindowActions {
         }
     }
 
+    enum PinnedStep: Equatable {
+        case launch, focus(CGWindowID), minimize(CGWindowID)
+    }
+
+    /// What ⌃⌥<n> does, as ⊞<n> does on Windows: launch an app with no windows, focus its first window,
+    /// step to the next one if one is already focused, or minimise it if it's the only one.
+    static func pinnedStep(windows: [CGWindowID], focused: CGWindowID?) -> PinnedStep {
+        guard let first = windows.first else { return .launch }
+        guard let focused, let index = windows.firstIndex(of: focused) else { return .focus(first) }
+        if windows.count == 1 { return .minimize(focused) }
+        return .focus(windows[(index + 1) % windows.count])
+    }
+
+    /// Runs ⌃⌥<number> for the nth pinned app, counting from 1.
+    static func activatePinned(_ number: Int) {
+        let pins = Settings.shared.pinnedBundleIDs
+        guard pins.indices.contains(number - 1) else { return }
+        let bundleID = pins[number - 1]
+        let tracker = WindowTracker.shared
+        let windows = tracker.windows.filter { $0.bundleID == bundleID }
+        switch pinnedStep(windows: windows.map(\.id), focused: tracker.focusedID) {
+        case .launch: launch(bundleID: bundleID)
+        case .focus(let id): if let window = tracker.window(id) { focus(window.ref) }
+        case .minimize(let id): if let window = tracker.window(id) { minimize(window.ref) }
+        }
+    }
+
+    /// Opens files or folders in a given app, as dropping them on its Dock icon does.
+    static func open(_ urls: [URL], with app: URL) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: configuration) { _, error in
+            if let error { Log.error("open in \(app.lastPathComponent) failed: \(error.localizedDescription)") }
+        }
+    }
+
     /// Presses the app's "New … Window" menu item, falling back to ⌘N.
     static func openNewWindow(bundleID: String) {
         guard let app = runningApp(bundleID) else {

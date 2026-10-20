@@ -49,8 +49,19 @@ final class WindowButton: BarItemView {
         tracked.title.isEmpty ? tracked.appName : "\(tracked.appName) — \(tracked.title)"
     }
 
+    override var dropApp: URL? { NSRunningApplication(processIdentifier: tracked.pid)?.bundleURL }
+
     override func primaryClick() {
         WindowActions.toggle(tracked, focusedID: focusedID)
+    }
+
+    override func shiftClick() {
+        guard let bundleID = tracked.bundleID else { return primaryClick() }
+        WindowActions.openNewWindow(bundleID: bundleID)
+    }
+
+    override func springLoaded() {
+        WindowActions.focus(tracked.ref)
     }
 
     override func middleClick() {
@@ -143,7 +154,15 @@ final class StartButton: BarItemView {
     }
 
     private func showAppsMenu() {
-        AppList.menu().popUp(positioning: nil, at: CGPoint(x: 0, y: bounds.height + 4), in: self)
+        // An inactive app's menu gets no key events, so activate for the search field and hand
+        // focus back afterwards unless an app was launched.
+        let previous = NSWorkspace.shared.frontmostApplication
+        WindowActions.activateSelf()
+        let search = AppSearchMenu()
+        search.menu.popUp(positioning: nil, at: CGPoint(x: 0, y: bounds.height + 4), in: self)
+        if !search.launched, let previous, previous.processIdentifier != getpid() {
+            previous.activate()
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -177,6 +196,8 @@ final class PinnedButton: BarItemView {
 
     override var tipText: String? { appName }
 
+    override var dropApp: URL? { NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) }
+
     override func primaryClick() {
         // The app may have windows on another display's bar.
         if let window = WindowTracker.shared.windows.first(where: { $0.bundleID == bundleID }) {
@@ -184,6 +205,10 @@ final class PinnedButton: BarItemView {
         } else {
             WindowActions.launch(bundleID: bundleID)
         }
+    }
+
+    override func shiftClick() {
+        WindowActions.openNewWindow(bundleID: bundleID)
     }
 
     override func middleClick() {
@@ -273,16 +298,105 @@ enum AppList {
         return apps.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    /// One item per app. NSMenu's built-in type-to-select acts as search.
-    static func menu() -> NSMenu {
-        let menu = NSMenu.manual("Apps")
-        for app in apps() {
-            let item = MenuAction(app.name) { WindowActions.launch(url: app.url) }
+    /// Case- and diacritic-insensitive substring match; an empty query matches everything.
+    static func matches(_ name: String, query: String) -> Bool {
+        let query = query.trimmingCharacters(in: .whitespaces)
+        return query.isEmpty || name.localizedStandardContains(query)
+    }
+}
+
+/// The Start menu: a search field on top, then one item per app. The field takes focus when the
+/// menu opens and filters the list as you type; Return opens the first match, Escape clears the
+/// search and then closes the menu.
+final class AppSearchMenu: NSObject, NSMenuDelegate, NSSearchFieldDelegate {
+    let menu = NSMenu.manual("Apps")
+    private let field = NSSearchField()
+    private var apps: [(app: AppList.App, item: NSMenuItem)] = []
+    private let noResults = NSMenuItem(title: "No matching apps", action: nil, keyEquivalent: "")
+    private(set) var launched = false
+
+    override init() {
+        super.init()
+        menu.delegate = self
+
+        let header = NSView(frame: CGRect(x: 0, y: 0, width: 260, height: 34))
+        header.autoresizingMask = [.width]
+        field.frame = CGRect(x: 10, y: 5, width: 240, height: 24)
+        field.autoresizingMask = [.width]
+        field.placeholderString = "Search apps"
+        field.focusRingType = .none
+        field.delegate = self
+        field.target = self
+        field.action = #selector(searchChanged) // the ✕ button clears without a text-change notification
+        header.addSubview(field)
+        let headerItem = NSMenuItem()
+        headerItem.view = header
+        menu.addItem(headerItem)
+        menu.addItem(.separator())
+
+        for app in AppList.apps() {
+            let item = MenuAction(app.name) { [unowned self] in launch(app.url) }
             let icon = NSWorkspace.shared.icon(forFile: app.url.path)
             icon.size = CGSize(width: 16, height: 16)
             item.image = icon
             menu.addItem(item)
+            apps.append((app, item))
         }
-        return menu
+        noResults.isEnabled = false
+        noResults.isHidden = true
+        menu.addItem(noResults)
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        // The field has no window until the menu is on screen, so focus it on the next pass of
+        // the menu's tracking loop.
+        perform(#selector(focusField), with: nil, afterDelay: 0, inModes: [.eventTracking])
+    }
+
+    @objc private func focusField() {
+        field.window?.makeFirstResponder(field)
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        filter(field.stringValue)
+    }
+
+    @objc private func searchChanged() {
+        filter(field.stringValue)
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            guard let first = apps.first(where: { !$0.item.isHidden }) else { return true }
+            menu.cancelTracking()
+            launch(first.app.url)
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            if field.stringValue.isEmpty {
+                menu.cancelTracking()
+            } else {
+                field.stringValue = ""
+                filter("")
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func launch(_ url: URL) {
+        launched = true
+        WindowActions.launch(url: url)
+    }
+
+    private func filter(_ query: String) {
+        var any = false
+        for entry in apps {
+            let visible = AppList.matches(entry.app.name, query: query)
+            entry.item.isHidden = !visible
+            any = any || visible
+        }
+        noResults.isHidden = any
     }
 }

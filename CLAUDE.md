@@ -15,7 +15,7 @@ All 15 build phases (0–14) are implemented; v0.1.0 is tagged. What still needs
 
 - `Package.swift`: tools 5.9 (→ Swift 5 mode), executable target `Strata`, test target `StrataTests`.
 - `Sources/Strata/`: one file per area, as planned in spec §4. `BarController.swift` also holds `OverlapGuard`; `BarItemView.swift` holds `MenuAction` and `HoverTip`; `BarButtons.swift` holds Start/Pinned/Window/Permission buttons and `AppList`; `Zones.swift` holds the models, `ZoneStore`, `ZoneOverlay` and `ZoneGridOverlay` (shift-drag); `SystemIntegration.swift` holds `LoginItem`, `DockSetup` and `Permission`; `Log.swift` is the logger.
-- `DebugSnapshot.swift` (DEBUG builds only) listens for distributed notifications so the app can be checked without Screen Recording or moving the user's mouse: `local.strata.debug.snapshot` renders each bar to `/tmp/strata-bar-<n>.png`; `local.strata.debug.click` with object `"<bar>:<item>[:middle|:menu[:<n>]|:drag:<dx>]"` runs an item's click, menu or drag; `local.strata.debug.revoke` `"1"`/`"0"` simulates losing Accessibility.
+- `DebugSnapshot.swift` (DEBUG builds only) listens for distributed notifications so the app can be checked without Screen Recording or moving the user's mouse: `local.strata.debug.snapshot` renders each bar to `/tmp/strata-bar-<n>.png`; `local.strata.debug.click` with object `"<bar>:<item>[:middle|:shift|:spring|:menu[:<n>]|:drag:<dx>|:drop:<path>]"` runs an item's click, menu, drag, file drop or drag-hover; `local.strata.debug.revoke` `"1"`/`"0"` simulates losing Accessibility.
 - `Resources/`: `Info.plist` (copied verbatim) and `AppIcon.icns` (generated: `scripts/make-icon.sh` renders `scripts/make-icon.swift` and runs `iconutil`).
 - `Tests/StrataTests/`: Swift Testing unit tests for the pure logic.
 

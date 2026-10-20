@@ -91,10 +91,11 @@ struct SettingsView: View {
                 }
                 .frame(minHeight: 120)
                 Button("Add…", action: addPinnedApp)
+                PinnedShortcutsToggle()
             } header: {
                 Text("Pinned apps")
             } footer: {
-                Text("Drag to reorder.").foregroundStyle(.secondary)
+                Text("Drag to reorder, or drop an app from Finder onto the bar to pin it.").foregroundStyle(.secondary)
             }
 
             Section("Hidden apps") {
@@ -170,6 +171,26 @@ private struct SystemSection: View {
             }
         }
         .onAppear { loginItem.refresh() }
+    }
+}
+
+private struct PinnedShortcutsToggle: View {
+    @ObservedObject private var settings = Settings.shared
+    @ObservedObject private var hotKeys = HotKeys.shared
+
+    var body: some View {
+        HStack {
+            Toggle("⌃⌥1–9 open the first nine pinned apps", isOn: $settings.appHotKeysEnabled)
+            Spacer()
+            let taken = hotKeys.unavailable.compactMap { target -> Int? in
+                if case .pinnedApp(let number) = target { return number }
+                return nil
+            }.sorted()
+            if settings.appHotKeysEnabled, !taken.isEmpty {
+                Text("⌃⌥" + taken.map(String.init).joined(separator: ", ") + " in use elsewhere")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+        }
     }
 }
 

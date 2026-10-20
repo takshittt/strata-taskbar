@@ -8,6 +8,8 @@ enum KeyCode {
     static let e: UInt32 = 14, t: UInt32 = 17, u: UInt32 = 32, i: UInt32 = 34, j: UInt32 = 38, k: UInt32 = 40
     static let returnKey: UInt32 = 36, tab: UInt32 = 48, space: UInt32 = 49, delete: UInt32 = 51, escape: UInt32 = 53
     static let forwardDelete: UInt32 = 117, home: UInt32 = 115, end: UInt32 = 119, pageUp: UInt32 = 116, pageDown: UInt32 = 121
+    /// 1 through 9 on the main row.
+    static let digits: [UInt32] = [18, 19, 20, 21, 23, 22, 26, 28, 25]
     static let leftArrow: UInt32 = 123, rightArrow: UInt32 = 124, downArrow: UInt32 = 125, upArrow: UInt32 = 126
 }
 
@@ -107,6 +109,8 @@ struct Shortcut: Codable, Hashable {
 enum HotKeyTarget: Hashable {
     case snap(SnapAction)
     case zone(display: String, zone: UUID)
+    /// The nth pinned app, counting from 1.
+    case pinnedApp(Int)
 }
 
 /// Global shortcuts via Carbon `RegisterEventHotKey` (spec §3.4): no extra permission, consumes the
@@ -138,7 +142,8 @@ final class HotKeys: ObservableObject {
             return noErr
         }, 1, &spec, nil, nil)
 
-        Settings.shared.$hotKeysEnabled
+        Settings.shared.$hotKeysEnabled.combineLatest(Settings.shared.$appHotKeysEnabled)
+            .map { [$0, $1] }
             .removeDuplicates()
             .dropFirst()
             .sink { [weak self] _ in DispatchQueue.main.async { self?.registerAll() } }
@@ -146,7 +151,12 @@ final class HotKeys: ObservableObject {
         registerAll()
     }
 
-    /// Re-registers every shortcut: the fixed snap set (if enabled) plus zone shortcuts.
+    /// ⌃⌥1–9, like ⊞1–9 on Windows.
+    static let pinnedAppBindings: [(HotKeyTarget, Shortcut)] = KeyCode.digits.enumerated().map {
+        (.pinnedApp($0.offset + 1), Shortcut(keyCode: $0.element, modifiers: Shortcut.control | Shortcut.option))
+    }
+
+    /// Re-registers every shortcut: the fixed snap and pinned-app sets (if enabled) plus zone shortcuts.
     func registerAll() {
         for (_, entry) in registered { UnregisterEventHotKey(entry.ref) }
         registered.removeAll()
@@ -155,6 +165,9 @@ final class HotKeys: ObservableObject {
         var bindings: [(HotKeyTarget, Shortcut)] = []
         if Settings.shared.hotKeysEnabled {
             bindings += SnapAction.allCases.map { (.snap($0), $0.defaultShortcut) }
+        }
+        if Settings.shared.appHotKeysEnabled {
+            bindings += Self.pinnedAppBindings
         }
         bindings += zoneBindings()
 

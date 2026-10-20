@@ -63,3 +63,32 @@ struct GroupingTests {
         #expect(["x", "y", "z"].groupedByFirstAppearance { $0 } == ["x", "y", "z"])
     }
 }
+
+struct AppSearchTests {
+    @Test func matchesIgnoringCaseAndDiacritics() {
+        #expect(AppList.matches("Google Chrome", query: "chr"))
+        #expect(AppList.matches("FaceTime", query: "facé"))
+        #expect(AppList.matches("Calculator", query: "  "))
+        #expect(!AppList.matches("Calculator", query: "xyz"))
+    }
+}
+
+struct PinnedAppTests {
+    @Test func insertingPinsBeforeASlotOrAtTheEnd() {
+        let pins = ["a", "b", "c"]
+        #expect(Settings.inserting(["x"], into: pins, at: 1) == ["a", "x", "b", "c"])
+        #expect(Settings.inserting(["x", "y", "x"], into: pins, at: nil) == ["a", "b", "c", "x", "y"])
+        #expect(Settings.inserting(["c"], into: pins, at: 0) == ["c", "a", "b"])
+        #expect(Settings.inserting(["b"], into: pins, at: 1) == pins) // dropped on its own slot
+        #expect(Settings.inserting(["a"], into: pins, at: 2) == ["b", "a", "c"])
+    }
+
+    @Test func numberShortcutLaunchesFocusesCyclesOrMinimizes() {
+        #expect(WindowActions.pinnedStep(windows: [], focused: 5) == .launch)
+        #expect(WindowActions.pinnedStep(windows: [1, 2], focused: 9) == .focus(1))
+        #expect(WindowActions.pinnedStep(windows: [1, 2], focused: nil) == .focus(1))
+        #expect(WindowActions.pinnedStep(windows: [1, 2, 3], focused: 2) == .focus(3))
+        #expect(WindowActions.pinnedStep(windows: [1, 2, 3], focused: 3) == .focus(1))
+        #expect(WindowActions.pinnedStep(windows: [7], focused: 7) == .minimize(7))
+    }
+}

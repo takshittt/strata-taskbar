@@ -8,6 +8,8 @@ class BarItemView: NSView {
     var isPressed = false { didSet { if isPressed != oldValue { needsDisplay = true } } }
     /// Drawn with a persistent highlight (the focused window).
     var isActive = false { didSet { if isActive != oldValue { needsDisplay = true } } }
+    /// Files are being dragged over this item and it will open (or pin) them.
+    private var isDropTarget = false { didSet { if isDropTarget != oldValue { needsDisplay = true } } }
 
     private var trackingArea: NSTrackingArea?
     private var mouseDownX: CGFloat?
@@ -17,9 +19,23 @@ class BarItemView: NSView {
     var tipText: String? { nil }
     /// Whether this item can be dragged to reorder.
     var isDraggable: Bool { true }
+    /// The app that opens files and folders dropped on this item, as on a Dock icon; `nil` refuses drops.
+    var dropApp: URL? { nil }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        // Links, text and images too, so holding any drag over a window button brings the window forward.
+        registerForDraggedTypes([.fileURL, .URL, .string, .tiff, .png])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     func primaryClick() {}
+    /// Shift-click: a plain click unless the item does something else.
+    func shiftClick() { primaryClick() }
     func middleClick() {}
+    /// Something has been dragged over the item and held there (Windows' spring-loading).
+    func springLoaded() {}
     func contextMenu() -> NSMenu? { bar?.barMenu() }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -69,7 +85,7 @@ class BarItemView: NSView {
         if isDragging {
             bar?.endDrag(self)
         } else if isPressed, bounds.contains(convert(event.locationInWindow, from: nil)) {
-            primaryClick()
+            if event.modifierFlags.contains(.shift) { shiftClick() } else { primaryClick() }
         }
     }
 
@@ -84,8 +100,63 @@ class BarItemView: NSView {
         middleClick()
     }
 
+    // MARK: Dropping files
+
+    private static let springDelay: TimeInterval = 0.6
+    private var springTimer: Timer?
+
+    /// Dropped apps get pinned; other files open in `dropApp`.
+    private func dropOperation(_ info: NSDraggingInfo) -> NSDragOperation {
+        let urls = DroppedFiles.urls(info)
+        guard !urls.isEmpty, DroppedFiles.appBundleIDs(urls) != nil || dropApp != nil else { return [] }
+        return .copy
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        springTimer?.invalidate()
+        springTimer = Timer.scheduledTimer(withTimeInterval: Self.springDelay, repeats: false) { [weak self] _ in
+            // Only if the drag is still held over this item.
+            guard let self, let window, NSEvent.pressedMouseButtons != 0,
+                  bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) else { return }
+            springLoaded()
+        }
+        let operation = dropOperation(sender)
+        isDropTarget = !operation.isEmpty
+        return operation
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        endDropHover()
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        endDropHover()
+    }
+
+    private func endDropHover() {
+        springTimer?.invalidate()
+        springTimer = nil
+        isDropTarget = false
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        endDropHover()
+        return drop(DroppedFiles.urls(sender))
+    }
+
+    /// Pins dropped apps, or opens other files in `dropApp`. Returns whether the drop was taken.
+    func drop(_ urls: [URL]) -> Bool {
+        if let bundleIDs = DroppedFiles.appBundleIDs(urls) {
+            bar?.pin(bundleIDs, at: self)
+            return true
+        }
+        guard let app = dropApp, !urls.isEmpty else { return false }
+        WindowActions.open(urls, with: app)
+        return true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        let alpha: CGFloat = isPressed ? 0.16 : isHovered ? 0.1 : isActive ? 0.12 : 0
+        let alpha: CGFloat = isPressed || isDropTarget ? 0.16 : isHovered ? 0.1 : isActive ? 0.12 : 0
         guard alpha > 0 else { return }
         NSColor.labelColor.withAlphaComponent(alpha).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 5, yRadius: 5).fill()
@@ -99,6 +170,24 @@ class BarItemView: NSView {
     }
 
     var iconSize: CGFloat { min(22, (bounds.height - 8).rounded()) }
+}
+
+/// Reads files dragged onto the bar.
+enum DroppedFiles {
+    static func urls(_ info: NSDraggingInfo) -> [URL] {
+        info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+    }
+
+    /// The apps' bundle IDs when every dropped item is an app, otherwise `nil`.
+    static func appBundleIDs(_ urls: [URL]) -> [String]? {
+        guard !urls.isEmpty else { return nil }
+        var bundleIDs: [String] = []
+        for url in urls {
+            guard url.pathExtension == "app", let bundleID = Bundle(url: url)?.bundleIdentifier else { return nil }
+            bundleIDs.append(bundleID)
+        }
+        return bundleIDs
+    }
 }
 
 /// A menu item that runs a closure. Never `copy()` one: the copy loses the closure.
