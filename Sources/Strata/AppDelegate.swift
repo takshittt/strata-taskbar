@@ -30,19 +30,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !servicesStarted else { return }
         servicesStarted = true
         Log.info("trusted, starting services")
-        logFrontmostWindow()
-    }
-
-    /// Smoke check for the AX wrappers until WindowTracker exists (Phase 3).
-    private func logFrontmostWindow() {
-        guard let front = NSWorkspace.shared.frontmostApplication,
-              let window = AX.element(AX.app(front.processIdentifier), kAXFocusedWindowAttribute) else {
-            Log.info("no focused window to inspect")
-            return
-        }
-        let frame = AX.frame(window) ?? .zero
-        let screen = ScreenGeometry.screen(for: frame).flatMap(ScreenGeometry.displayKey) ?? "?"
-        let title = AX.string(window, kAXTitleAttribute) ?? ""
-        Log.info("focused window \(front.localizedName ?? "?") — \"\(title)\" id=\(AX.windowID(window) ?? 0) frame=\(frame) display=\(screen)")
+        WindowTracker.shared.start()
     }
 }
