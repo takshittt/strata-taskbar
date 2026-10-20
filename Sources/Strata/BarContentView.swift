@@ -66,6 +66,10 @@ final class BarContentView: NSView {
     /// Order: `[Start] [one slot per pinned app] [unpinned windows]`. A pinned slot shows the app's
     /// windows on this bar if it has any, otherwise a launcher.
     func update(pinned: [String], windows: [TrackedWindow], focusedID: CGWindowID?) {
+        guard drag == nil else {
+            pendingUpdate = (pinned, windows, focusedID)
+            return
+        }
         var used = Set<CGWindowID>()
         func button(for window: TrackedWindow) -> WindowButton {
             used.insert(window.id)
@@ -136,8 +140,8 @@ final class BarContentView: NSView {
         return result
     }
 
-    /// Lays units out left to right (or centred), skipping `excluding` (the item being dragged).
-    func layoutItems(animated: Bool, excluding dragged: BarUnit.Kind? = nil) {
+    /// Target frame of every item: left to right (or centred), in unit order.
+    private func targetFrames() -> [ObjectIdentifier: CGRect] {
         let widths = widths(for: units)
         let items = units.flatMap(\.items)
         var total: CGFloat = CGFloat(max(0, items.count - 1)) * Self.spacing
@@ -146,18 +150,116 @@ final class BarContentView: NSView {
         if Settings.shared.alignment == .center { x = max(Self.padding, ((bounds.width - total) / 2).rounded()) }
         let y = ((bounds.height - itemHeight) / 2).rounded(.down)
 
+        var frames: [ObjectIdentifier: CGRect] = [:]
+        for item in items {
+            let width: CGFloat = widths[ObjectIdentifier(item)] ?? 0
+            frames[ObjectIdentifier(item)] = CGRect(x: x, y: y, width: width, height: itemHeight)
+            x += width + Self.spacing
+        }
+        return frames
+    }
+
+    /// Moves items to their target frames, leaving the unit being dragged where the cursor put it.
+    func layoutItems(animated: Bool) {
+        let frames = targetFrames()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = animated ? 0.18 : 0
             context.allowsImplicitAnimation = animated
-            for unit in units {
+            for unit in units where unit.kind != drag?.kind {
                 for item in unit.items {
-                    let width: CGFloat = widths[ObjectIdentifier(item)] ?? 0
-                    let frame = CGRect(x: x, y: y, width: width, height: itemHeight)
-                    x += frame.width + Self.spacing
-                    guard unit.kind != dragged, item.frame != frame else { continue }
+                    guard let frame = frames[ObjectIdentifier(item)], item.frame != frame else { continue }
                     if animated { item.animator().frame = frame } else { item.frame = frame }
                 }
             }
+        }
+    }
+
+    // MARK: Drag to reorder
+
+    private struct DragState {
+        let kind: BarUnit.Kind
+        /// Cursor x minus the unit's left edge at the start of the drag.
+        let grabOffset: CGFloat
+    }
+
+    private var drag: DragState?
+    /// The newest contents that arrived mid-drag, applied when the drag ends.
+    private var pendingUpdate: (pinned: [String], windows: [TrackedWindow], focusedID: CGWindowID?)?
+
+    /// Units only reorder within their own group: pinned slots among pinned slots, windows among windows.
+    private static func group(_ kind: BarUnit.Kind) -> Int {
+        switch kind {
+        case .start: return 0
+        case .pinned: return 1
+        case .window: return 2
+        }
+    }
+
+    func beginDrag(_ item: BarItemView, atX x: CGFloat) {
+        guard let unit = units.first(where: { $0.items.contains { $0 === item } }), unit.kind != .start,
+              let first = unit.items.first else { return }
+        HoverTip.shared.hide()
+        drag = DragState(kind: unit.kind, grabOffset: x - first.frame.minX)
+        for item in unit.items { addSubview(item, positioned: .above, relativeTo: nil) }
+    }
+
+    func continueDrag(_ item: BarItemView, atX x: CGFloat) {
+        guard let drag, let index = units.firstIndex(where: { $0.kind == drag.kind }) else { return }
+        let group = Self.group(drag.kind)
+        let groupIndices = units.indices.filter { Self.group(units[$0].kind) == group }
+        let frames = targetFrames()
+        func left(_ unit: BarUnit) -> CGFloat { frames[ObjectIdentifier(unit.items[0])]?.minX ?? 0 }
+        func right(_ unit: BarUnit) -> CGFloat { frames[ObjectIdentifier(unit.items[unit.items.count - 1])]?.maxX ?? 0 }
+
+        // Follow the cursor, but stay inside the group.
+        guard let firstIndex = groupIndices.first, let lastIndex = groupIndices.last else { return }
+        let unit = units[index]
+        let width = right(unit) - left(unit)
+        let minX = left(units[firstIndex])
+        let maxX = right(units[lastIndex]) - width
+        var originX = min(max(x - drag.grabOffset, minX), maxX)
+        for item in unit.items {
+            item.frame.origin.x = originX
+            originX += item.frame.width + Self.spacing
+        }
+
+        // Swap with a neighbour once the dragged unit's centre passes the neighbour's centre.
+        // Use the unclamped position, so dragging past the group's edge still reaches the end slot.
+        let center = x - drag.grabOffset + width / 2
+        func midX(_ i: Int) -> CGFloat { (left(units[i]) + right(units[i])) / 2 }
+        var target = index
+        if index > firstIndex, center < midX(index - 1) {
+            target = index - 1
+        } else if index < lastIndex, center > midX(index + 1) {
+            target = index + 1
+        }
+        if target != index {
+            units.swapAt(index, target)
+            layoutItems(animated: true)
+        }
+    }
+
+    func endDrag(_ item: BarItemView) {
+        guard let drag else { return }
+        self.drag = nil
+        layoutItems(animated: true)
+        switch drag.kind {
+        case .pinned:
+            Settings.shared.pinnedBundleIDs = units.compactMap {
+                if case .pinned(let bundleID) = $0.kind { return bundleID }
+                return nil
+            }
+        case .window:
+            WindowTracker.shared.applyOrder(units.compactMap {
+                if case .window(let id) = $0.kind { return id }
+                return nil
+            })
+        case .start:
+            break
+        }
+        if let pending = pendingUpdate {
+            pendingUpdate = nil
+            update(pinned: pending.pinned, windows: pending.windows, focusedID: pending.focusedID)
         }
     }
 
@@ -171,10 +273,13 @@ final class BarContentView: NSView {
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    func itemHoverChanged(_ item: BarItemView, hovering: Bool) {}
-    func beginDrag(_ item: BarItemView, atX x: CGFloat) {}
-    func continueDrag(_ item: BarItemView, atX x: CGFloat) {}
-    func endDrag(_ item: BarItemView) {}
+    func itemHoverChanged(_ item: BarItemView, hovering: Bool) {
+        if hovering, drag == nil {
+            HoverTip.shared.hover(item)
+        } else {
+            HoverTip.shared.leave(item)
+        }
+    }
 }
 
 /// Menus shared by the bar background, the Start button and window buttons.

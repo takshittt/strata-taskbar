@@ -27,6 +27,14 @@ enum DebugSnapshot {
             Log.info("debug click on \(type(of: items[i])) \(items[i].tipText ?? "")")
             switch parts.count > 2 ? String(parts[2]) : "" {
             case "middle": items[i].middleClick()
+            case "drag":
+                // "<bar>:<item>:drag:<dx>" feeds the drag callbacks in 10 pt steps.
+                let dx = parts.count > 3 ? CGFloat(Double(parts[3]) ?? 0) : 0
+                let bar = views[b], startX = items[i].frame.midX
+                bar.beginDrag(items[i], atX: startX)
+                let steps = max(1, Int(abs(dx) / 10))
+                for step in 1...steps { bar.continueDrag(items[i], atX: startX + dx * CGFloat(step) / CGFloat(steps)) }
+                bar.endDrag(items[i])
             case "menu":
                 let menu = items[i].contextMenu()
                 if parts.count > 3, let n = Int(parts[3]), let item = menu?.items[safe: n] {

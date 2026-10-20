@@ -132,3 +132,85 @@ extension NSMenu {
         addItem(item)
     }
 }
+
+/// Tooltip for bar items. `NSView.toolTip` is unreliable in a panel of an inactive app, so we draw our own.
+/// Appears after a delay; moving straight to another item switches it instantly.
+final class HoverTip {
+    static let shared = HoverTip()
+
+    private static let delay: TimeInterval = 0.6
+    /// Moving to another item within this long of the tip hiding shows the next tip at once.
+    private static let switchWindow: TimeInterval = 0.3
+
+    private let panel: NSPanel
+    private let label = NSTextField(labelWithString: "")
+    private weak var item: BarItemView?
+    private var timer: Timer?
+    private var lastHidden = Date.distantPast
+
+    private init() {
+        panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        panel.level = .popUpMenu
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        panel.ignoresMouseEvents = true
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+
+        let background = NSVisualEffectView()
+        background.material = .toolTip
+        background.state = .active
+        background.wantsLayer = true
+        background.layer?.cornerRadius = 6
+        background.layer?.masksToBounds = true
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.lineBreakMode = .byTruncatingTail
+        background.addSubview(label)
+        panel.contentView = background
+    }
+
+    func hover(_ item: BarItemView) {
+        timer?.invalidate()
+        self.item = item
+        if panel.isVisible || Date().timeIntervalSince(lastHidden) < Self.switchWindow {
+            show()
+        } else {
+            timer = Timer.scheduledTimer(withTimeInterval: Self.delay, repeats: false) { [weak self] _ in self?.show() }
+        }
+    }
+
+    /// The mouse left `item` (or pressed it): hide if it's the one showing.
+    func leave(_ item: BarItemView) {
+        guard self.item === item else { return }
+        hide()
+    }
+
+    func hide() {
+        timer?.invalidate()
+        item = nil
+        if panel.isVisible {
+            panel.orderOut(nil)
+            lastHidden = Date()
+        }
+    }
+
+    private func show() {
+        guard let item, item.isHovered, let text = item.tipText, !text.isEmpty,
+              let window = item.window, let screen = window.screen else {
+            hide()
+            return
+        }
+        label.stringValue = text
+        let size = label.intrinsicContentSize
+        let width = min(ceil(size.width) + 16, 600)
+        let height = ceil(size.height) + 8
+        label.frame = CGRect(x: 8, y: 4, width: width - 16, height: ceil(size.height))
+
+        let anchor = window.convertToScreen(item.convert(item.bounds, to: nil))
+        let visible = screen.frame
+        var x = anchor.midX - width / 2
+        x = min(max(x, visible.minX + 4), visible.maxX - width - 4)
+        panel.setFrame(CGRect(x: x, y: anchor.maxY + 8, width: width, height: height), display: true)
+        panel.orderFrontRegardless()
+    }
+}
