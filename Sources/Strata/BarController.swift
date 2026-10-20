@@ -70,6 +70,7 @@ final class BarController {
     /// Creates, re-frames or removes panels so there is exactly one per bar screen.
     func rebuild() {
         let settings = Settings.shared
+        Log.info("rebuilding bars for \(NSScreen.screens.count) screen(s)")
         var live: [CGDirectDisplayID: BarPanel] = [:]
         for screen in barScreens {
             guard let id = ScreenGeometry.displayID(screen) else { continue }
@@ -96,11 +97,15 @@ final class BarController {
         var windows = tracker.windows.filter { !hidden.contains($0.bundleID ?? "") }
         if settings.groupByApp { windows = windows.groupedByFirstAppearance { $0.pid } }
 
+        // NSScreen objects can be recreated on configuration changes, so match displays by ID.
+        var displayOf: [CGWindowID: CGDirectDisplayID] = [:]
+        if settings.windowScope == .thisDisplay {
+            for window in windows {
+                displayOf[window.id] = ScreenGeometry.screen(for: window.frame).flatMap(ScreenGeometry.displayID)
+            }
+        }
         for (id, panel) in panels {
-            let screen = NSScreen.screens.first { ScreenGeometry.displayID($0) == id }
-            let shown = settings.windowScope == .allDisplays || screen == nil
-                ? windows
-                : windows.filter { ScreenGeometry.screen(for: $0.frame) == screen }
+            let shown = settings.windowScope == .allDisplays ? windows : windows.filter { displayOf[$0.id] == id }
             panel.content.update(pinned: settings.pinnedBundleIDs, windows: shown, focusedID: tracker.focusedID)
         }
     }
