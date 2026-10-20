@@ -107,3 +107,36 @@ extension WindowActions {
         }
     }
 }
+
+// MARK: Apps without windows
+
+extension WindowActions {
+    /// Regular apps with no real window (layer 0, at least 60×60) on any Space. Finder is never included.
+    static func appsWithoutWindows() -> [NSRunningApplication] {
+        var pidsWithWindows = Set<pid_t>()
+        let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        for info in list where (info[kCGWindowLayer as String] as? Int) == 0 {
+            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds),
+                  rect.width >= 60, rect.height >= 60 else { continue }
+            pidsWithWindows.insert(pid)
+        }
+        let ownPID = getpid()
+        return NSWorkspace.shared.runningApplications.filter {
+            $0.activationPolicy == .regular && $0.processIdentifier != ownPID
+                && $0.bundleIdentifier != "com.apple.finder" && !pidsWithWindows.contains($0.processIdentifier)
+        }
+    }
+
+    static func quitAppsWithoutWindows() {
+        for app in appsWithoutWindows() {
+            Log.info("quitting \(app.localizedName ?? "?") (no windows)")
+            app.terminate()
+        }
+    }
+
+    static func quit(pid: pid_t) {
+        NSRunningApplication(processIdentifier: pid)?.terminate()
+    }
+}

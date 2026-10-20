@@ -163,9 +163,49 @@ final class BarContentView: NSView {
 
     // MARK: Hooks used by items
 
-    func barMenu() -> NSMenu? { nil }
+    func barMenu() -> NSMenu? { BarMenus.barMenu() }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard let menu = barMenu() else { return }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     func itemHoverChanged(_ item: BarItemView, hovering: Bool) {}
     func beginDrag(_ item: BarItemView, atX x: CGFloat) {}
     func continueDrag(_ item: BarItemView, atX x: CGFloat) {}
     func endDrag(_ item: BarItemView) {}
+}
+
+/// Menus shared by the bar background, the Start button and window buttons.
+enum BarMenus {
+    /// Set by the app delegate once those windows exist.
+    static var showSettings: (() -> Void)?
+    static var showZoneEditor: (() -> Void)?
+    /// Adds the Snap and Move to Zone submenus, once those features exist.
+    static var windowSubmenus: ((NSMenu, TrackedWindow) -> Void)?
+
+    static func barMenu() -> NSMenu {
+        let menu = NSMenu.manual()
+        menu.addItem(MenuAction("Settings…", enabled: showSettings != nil) { showSettings?() })
+        menu.addItem(MenuAction("Zone Editor…", enabled: showZoneEditor != nil) { showZoneEditor?() })
+        menu.addItem(.separator())
+        let idle = WindowActions.appsWithoutWindows().count
+        menu.addItem(MenuAction("Quit Apps Without Windows (\(idle))", enabled: idle > 0) {
+            WindowActions.quitAppsWithoutWindows()
+        })
+        menu.addItem(.separator())
+        menu.addItem(MenuAction("About Strata") { showAbout() })
+        menu.addItem(MenuAction("Quit Strata") { NSApp.terminate(nil) })
+        return menu
+    }
+
+    static func addWindowSubmenus(to menu: NSMenu, window: TrackedWindow) {
+        windowSubmenus?(menu, window)
+    }
+
+    static func showAbout() {
+        NSApp.activate()
+        NSApp.orderFrontStandardAboutPanel(nil)
+    }
 }

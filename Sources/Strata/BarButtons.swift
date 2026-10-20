@@ -57,6 +57,39 @@ final class WindowButton: BarItemView {
         WindowActions.close(tracked.ref)
     }
 
+    override func contextMenu() -> NSMenu? {
+        let window = tracked
+        let settings = Settings.shared
+        let menu = NSMenu.manual()
+        let header = window.title.isEmpty ? window.appName : window.title
+        menu.addHeader(header.count > 60 ? String(header.prefix(59)) + "…" : header)
+        menu.addItem(.separator())
+
+        if window.isMinimized {
+            menu.addItem(MenuAction("Restore") { WindowActions.focus(window.ref) })
+        } else {
+            menu.addItem(MenuAction("Minimize") { WindowActions.minimize(window.ref) })
+        }
+        if let bundleID = window.bundleID {
+            menu.addItem(MenuAction("New Window") { WindowActions.openNewWindow(bundleID: bundleID) })
+        }
+        menu.addItem(MenuAction("Close Window") { WindowActions.close(window.ref) })
+        BarMenus.addWindowSubmenus(to: menu, window: window)
+
+        if let bundleID = window.bundleID {
+            menu.addItem(.separator())
+            if settings.isPinned(bundleID) {
+                menu.addItem(MenuAction("Unpin \(window.appName)") { settings.unpin(bundleID) })
+            } else {
+                menu.addItem(MenuAction("Pin \(window.appName)") { settings.pin(bundleID) })
+            }
+            menu.addItem(MenuAction("Hide \(window.appName) from Bar") { settings.hide(bundleID) })
+        }
+        menu.addItem(.separator())
+        menu.addItem(MenuAction("Quit \(window.appName)") { WindowActions.quit(pid: window.pid) })
+        return menu
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         let alpha: CGFloat = tracked.isMinimized || tracked.isAppHidden ? 0.45 : 1
@@ -155,6 +188,20 @@ final class PinnedButton: BarItemView {
 
     override func middleClick() {
         WindowActions.openNewWindow(bundleID: bundleID)
+    }
+
+    override func contextMenu() -> NSMenu? {
+        let bundleID = bundleID
+        let menu = NSMenu.manual()
+        menu.addHeader(appName)
+        menu.addItem(.separator())
+        menu.addItem(MenuAction("New Window") { WindowActions.openNewWindow(bundleID: bundleID) })
+        menu.addItem(MenuAction("Unpin") { Settings.shared.unpin(bundleID) })
+        if let app = WindowActions.runningApp(bundleID) {
+            menu.addItem(.separator())
+            menu.addItem(MenuAction("Quit \(appName)") { app.terminate() })
+        }
+        return menu
     }
 
     override func draw(_ dirtyRect: NSRect) {
