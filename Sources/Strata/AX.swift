@@ -110,6 +110,22 @@ enum ScreenGeometry {
         CGRect(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)
     }
 
+    /// Usable area in Cocoa coordinates: the visible frame minus the bar on screens that have one.
+    static func workArea(_ screen: NSScreen) -> CGRect {
+        var area = screen.visibleFrame
+        if BarController.shared.hasBar(on: screen) {
+            let bar = BarController.shared.barHeight
+            area.origin.y += bar
+            area.size.height -= bar
+        }
+        return area
+    }
+
+    /// `workArea` in AX coordinates.
+    static func axWorkArea(_ screen: NSScreen) -> CGRect {
+        axRect(fromCocoa: workArea(screen))
+    }
+
     /// The screen showing most of a window, given its AX frame.
     static func screen(for axFrame: CGRect) -> NSScreen? {
         let rect = cocoaRect(fromAX: axFrame)

@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.info("launched (pid \(getpid()))")
+        BarController.shared.start()
 
         if AX.isTrusted {
             startServices()
