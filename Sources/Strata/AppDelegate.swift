@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.info("launched (pid \(getpid()))")
         installMainMenu()
         BarMenus.showSettings = { SettingsWindow.shared.show() }
+        BarMenus.showZoneEditor = { ZoneEditorWindow.shared.show() }
         BarController.shared.start()
         #if DEBUG
         DebugSnapshot.install()
@@ -40,16 +41,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BarMenus.windowSubmenus = { menu, window in
             menu.addItem(.separator())
             menu.addItem(WindowMover.snapMenuItem(for: window.ref))
+            if let zones = WindowMover.zoneMenuItem(for: window.ref) { menu.addItem(zones) }
         }
+        HotKeys.shared.zoneBindings = { ZoneStore.shared.shortcutBindings }
         HotKeys.shared.onTrigger = { target in
             switch target {
             case .snap(let action): WindowMover.perform(action)
-            case .zone: break
+            case .zone(let display, let zone): WindowMover.moveFocused(toZone: zone, display: display)
             }
         }
         HotKeys.shared.start()
         OverlapGuard.shared.start()
         OverlapGuard.shared.checkAll()
+        ZoneGridOverlay.shared.start()
     }
 
     /// Never shown (the app is LSUIElement), but routes standard edit shortcuts in the Settings and Zone Editor windows.
