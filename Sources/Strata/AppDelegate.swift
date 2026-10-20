@@ -48,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         HotKeys.shared.start()
+        OverlapGuard.shared.start()
+        OverlapGuard.shared.checkAll()
     }
 
     /// Never shown (the app is LSUIElement), but routes standard edit shortcuts in the Settings and Zone Editor windows.

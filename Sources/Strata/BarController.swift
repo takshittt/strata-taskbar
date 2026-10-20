@@ -87,6 +87,7 @@ final class BarController {
         }
         panels = live
         updateContents()
+        OverlapGuard.shared.checkAll()
     }
 
     /// Pushes the tracker's windows to every bar, filtered by hidden apps and display.
@@ -121,5 +122,90 @@ final class BarController {
     func hasBar(on screen: NSScreen) -> Bool {
         guard let id = ScreenGeometry.displayID(screen) else { return false }
         return panels[id] != nil
+    }
+}
+
+/// Keeps windows from sliding under the bar (spec §3.6): after a window moves or resizes, shrink it to
+/// end at the bar's top edge, or move it up if it's too short to shrink.
+final class OverlapGuard {
+    static let shared = OverlapGuard()
+
+    private static let debounce: TimeInterval = 0.3
+    private static let minimumHeight: CGFloat = 120
+    /// More adjustments than this to one window within `loopWindow` means the app is fighting back.
+    private static let maxAdjustments = 3
+    private static let loopWindow: CFAbsoluteTime = 5
+
+    private var pending = Set<CGWindowID>()
+    private var timer: Timer?
+    private var adjustments: [CGWindowID: [CFAbsoluteTime]] = [:]
+    private var cancellables = Set<AnyCancellable>()
+
+    func start() {
+        WindowTracker.shared.geometryChanged
+            .sink { [weak self] id in self?.schedule([id]) }
+            .store(in: &cancellables)
+        Settings.shared.$avoidBarOverlap
+            .removeDuplicates()
+            .filter { $0 }
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.checkAll() } }
+            .store(in: &cancellables)
+    }
+
+    func checkAll() {
+        schedule(WindowTracker.shared.windows.map(\.id))
+    }
+
+    private func schedule(_ ids: [CGWindowID]) {
+        guard Settings.shared.avoidBarOverlap else { return }
+        pending.formUnion(ids)
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: Self.debounce, repeats: false) { [weak self] _ in self?.check() }
+    }
+
+    private func check() {
+        // Never fight a drag the user is still doing: wait until the mouse is released.
+        guard NSEvent.pressedMouseButtons == 0 else {
+            schedule([])
+            return
+        }
+        let ids = pending
+        pending.removeAll()
+        let now = CFAbsoluteTimeGetCurrent()
+        for id in ids {
+            guard let window = WindowTracker.shared.window(id),
+                  !window.isMinimized, !window.isAppHidden,
+                  AX.bool(window.ref.element, "AXFullScreen") != true,
+                  let frame = AX.frame(window.ref.element),
+                  let screen = ScreenGeometry.screen(for: frame),
+                  BarController.shared.hasBar(on: screen) else { continue }
+
+            let barTop = ScreenGeometry.axRect(fromCocoa: BarController.shared.barFrame(on: screen)).minY
+            // Only windows that reach into the bar but start above it.
+            guard frame.maxY > barTop + 1, frame.minY < barTop else { continue }
+
+            let recent = (adjustments[id] ?? []).filter { now - $0 < Self.loopWindow }
+            guard recent.count < Self.maxAdjustments else {
+                Log.info("overlap guard: giving up on window \(id) (\(window.appName)) after repeated adjustments")
+                continue
+            }
+            adjustments[id] = recent + [now]
+            fit(window.ref, frame: frame, barTop: barTop, workTop: ScreenGeometry.axWorkArea(screen).minY)
+        }
+        adjustments = adjustments.filter { $0.value.contains { now - $0 < Self.loopWindow } }
+    }
+
+    private func fit(_ ref: WindowRef, frame: CGRect, barTop: CGFloat, workTop: CGFloat) {
+        let available = barTop - frame.minY
+        if available >= Self.minimumHeight {
+            var size = CGSize(width: frame.width, height: available)
+            if let value = AXValueCreate(.cgSize, &size) { AX.set(ref.element, kAXSizeAttribute, value) }
+            Log.info("overlap guard: shrank window \(ref.id) to end at the bar")
+        }
+        // Too short to shrink, or the app kept its height: move it up instead.
+        guard let now = AX.frame(ref.element), now.maxY > barTop + 1 else { return }
+        var origin = CGPoint(x: now.minX, y: max(workTop, barTop - now.height))
+        if let value = AXValueCreate(.cgPoint, &origin) { AX.set(ref.element, kAXPositionAttribute, value) }
+        Log.info("overlap guard: moved window \(ref.id) above the bar")
     }
 }
