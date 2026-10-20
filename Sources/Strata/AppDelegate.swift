@@ -36,6 +36,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         servicesStarted = true
         Log.info("trusted, starting services")
         WindowTracker.shared.start()
+
+        BarMenus.windowSubmenus = { menu, window in
+            menu.addItem(.separator())
+            menu.addItem(WindowMover.snapMenuItem(for: window.ref))
+        }
+        HotKeys.shared.onTrigger = { target in
+            switch target {
+            case .snap(let action): WindowMover.perform(action)
+            case .zone: break
+            }
+        }
+        HotKeys.shared.start()
     }
 
     /// Never shown (the app is LSUIElement), but routes standard edit shortcuts in the Settings and Zone Editor windows.

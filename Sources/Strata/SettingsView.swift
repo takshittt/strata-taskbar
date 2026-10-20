@@ -139,7 +139,38 @@ struct SettingsView: View {
 
 /// Sections for features added in later phases (snapping, system integration).
 struct SettingsExtraSections: View {
-    var body: some View { EmptyView() }
+    var body: some View {
+        SnappingSection()
+    }
+}
+
+private struct SnappingSection: View {
+    @ObservedObject private var settings = Settings.shared
+    @ObservedObject private var hotKeys = HotKeys.shared
+
+    var body: some View {
+        Section("Window snapping") {
+            Toggle("Enable built-in snap shortcuts", isOn: $settings.hotKeysEnabled)
+            LabeledContent("Gap when snapping") {
+                Slider(value: $settings.windowGap, in: 0...24, step: 1)
+                Text("\(Int(settings.windowGap)) pt").monospacedDigit().frame(width: 44, alignment: .trailing)
+            }
+            DisclosureGroup("Shortcuts") {
+                ForEach(SnapAction.allCases, id: \.self) { action in
+                    HStack {
+                        Text(action.title)
+                        Spacer()
+                        if settings.hotKeysEnabled, hotKeys.unavailable.contains(.snap(action)) {
+                            Text("in use elsewhere").font(.caption).foregroundStyle(.orange)
+                        }
+                        Text(action.defaultShortcut.displayString)
+                            .monospaced()
+                            .foregroundStyle(settings.hotKeysEnabled ? .primary : .secondary)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Settings window. ⌘W closes it even though the app has no visible menu bar.
