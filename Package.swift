@@ -7,5 +7,6 @@ let package = Package(
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(name: "Strata", path: "Sources/Strata"),
+        .testTarget(name: "StrataTests", dependencies: ["Strata"], path: "Tests/StrataTests"),
     ]
 )
