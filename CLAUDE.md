@@ -36,7 +36,9 @@ swift build                                   # dev build
 scripts/build-app.sh [--open]                 # arm64 debug build → build/Strata.app → codesign "Strata Dev"
 scripts/build-app.sh --release                # universal release build (no debug hooks); prints lipo -info
 scripts/make-icon.sh                          # regenerate Resources/AppIcon.icns
-swift test                                    # unit tests (Swift Testing, works under CLT)
+swift test -Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing
+                                              # unit tests (Swift Testing). The plugin path is needed since SwiftPM's
+                                              # new build backend doesn't find TestingMacros under CLT on its own
 swift test --filter <TestName>                # single test
 /usr/bin/log stream --predicate 'process == "Strata"'  # view logs (full path: zsh has a `log` builtin)
 pkill -x Strata                               # quit from the terminal (or bar right-click → Quit Strata)
