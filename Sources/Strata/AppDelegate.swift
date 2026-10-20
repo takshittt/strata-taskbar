@@ -1,8 +1,9 @@
 import AppKit
+import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var trustTimer: Timer?
     private var servicesStarted = false
+    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.info("launched (pid \(getpid()))")
@@ -14,22 +15,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DebugSnapshot.install()
         #endif
 
-        if AX.isTrusted {
-            startServices()
-            return
+        if !AX.isTrusted {
+            Log.info("not trusted, prompting for Accessibility")
+            AX.promptForTrust()
         }
-
-        Log.info("not trusted, prompting for Accessibility")
-        AX.promptForTrust()
-        // The grant takes effect in the running process, so poll instead of asking for a relaunch.
-        trustTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, AX.isTrusted else { return }
-                self.trustTimer?.invalidate()
-                self.trustTimer = nil
-                self.startServices()
+        // The grant takes effect in the running process, so watch for it instead of asking for a relaunch.
+        // Revoking it later shows a message on the bar until it's granted again.
+        Permission.shared.startMonitoring()
+        Permission.shared.$isTrusted
+            .removeDuplicates()
+            .sink { [weak self] trusted in
+                DispatchQueue.main.async {
+                    if trusted { self?.startServices() }
+                    WindowTracker.shared.scheduleRefresh()
+                    BarController.shared.updateContents()
+                }
             }
-        }
+            .store(in: &cancellables)
     }
 
     private func startServices() {

@@ -215,6 +215,34 @@ final class PinnedButton: BarItemView {
     }
 }
 
+/// Shown instead of window buttons while Strata lacks Accessibility permission.
+final class PermissionButton: BarItemView {
+    override var isDraggable: Bool { false }
+    override var tipText: String? { "Open Privacy & Security → Accessibility" }
+
+    override func primaryClick() {
+        AX.promptForTrust()
+        Permission.openSystemSettings()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let configuration = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+            .applying(.init(paletteColors: [.systemOrange]))
+        let symbol = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration)
+        let size = symbol?.size ?? .zero
+        symbol?.draw(in: CGRect(x: 8, y: ((bounds.height - size.height) / 2).rounded(), width: size.width, height: size.height))
+
+        let font = NSFont.systemFont(ofSize: CGFloat(Settings.shared.fontSize), weight: .medium)
+        let text = "Strata needs Accessibility access — click to grant"
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
+        let height = ceil(font.ascender - font.descender)
+        text.draw(with: CGRect(x: 14 + size.width, y: ((bounds.height - height) / 2).rounded(), width: bounds.width - size.width - 20, height: height),
+                  options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attributes)
+    }
+}
+
 /// Installed apps for the Start menu (spec §3.7).
 enum AppList {
     static let raycastBundleID = "com.raycast.macos"

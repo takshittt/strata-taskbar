@@ -16,6 +16,12 @@ enum DebugSnapshot {
     }
 
     static func install() {
+        // "local.strata.debug.revoke" with object "1"/"0" simulates losing Accessibility.
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("local.strata.debug.revoke"), object: nil, queue: .main
+        ) { note in
+            Permission.shared.simulateRevoked = (note.object as? String) == "1"
+        }
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("local.strata.debug.click"), object: nil, queue: .main
         ) { note in

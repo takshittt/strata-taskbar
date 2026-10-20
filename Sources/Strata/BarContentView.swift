@@ -14,6 +14,7 @@ struct BarUnit {
         case start
         case pinned(String)
         case window(CGWindowID)
+        case permission
     }
 
     let kind: Kind
@@ -27,6 +28,7 @@ final class BarContentView: NSView {
 
     private(set) var units: [BarUnit] = []
     private let startButton = StartButton()
+    private let permissionButton = PermissionButton()
     private var windowButtons: [CGWindowID: WindowButton] = [:]
     private var pinnedButtons: [String: PinnedButton] = [:]
 
@@ -65,9 +67,10 @@ final class BarContentView: NSView {
     /// Rebuilds the unit list, reusing existing buttons by window ID so nothing flickers.
     /// Order: `[Start] [one slot per pinned app] [unpinned windows]`. A pinned slot shows the app's
     /// windows on this bar if it has any, otherwise a launcher.
-    func update(pinned: [String], windows: [TrackedWindow], focusedID: CGWindowID?) {
+    /// Without Accessibility the bar shows only Start and a prompt to grant it.
+    func update(pinned: [String], windows: [TrackedWindow], focusedID: CGWindowID?, needsPermission: Bool = false) {
         guard drag == nil else {
-            pendingUpdate = (pinned, windows, focusedID)
+            pendingUpdate = (pinned, windows, focusedID, needsPermission)
             return
         }
         var used = Set<CGWindowID>()
@@ -81,7 +84,12 @@ final class BarContentView: NSView {
 
         var next = [BarUnit(kind: .start, items: [startButton])]
         var usedPins = Set<String>()
-        for bundleID in pinned {
+        if needsPermission {
+            next.append(BarUnit(kind: .permission, items: [permissionButton]))
+        } else {
+            permissionButton.removeFromSuperview()
+        }
+        for bundleID in needsPermission ? [] : pinned {
             let appWindows = windows.filter { $0.bundleID == bundleID }
             if appWindows.isEmpty {
                 usedPins.insert(bundleID)
@@ -94,7 +102,7 @@ final class BarContentView: NSView {
             }
         }
         let pinnedSet = Set(pinned)
-        for window in windows where !pinnedSet.contains(window.bundleID ?? "") {
+        for window in windows where !needsPermission && !pinnedSet.contains(window.bundleID ?? "") {
             next.append(BarUnit(kind: .window(window.id), items: [button(for: window)]))
         }
 
@@ -136,7 +144,9 @@ final class BarContentView: NSView {
             if windowWidth * windowCount > available { windowWidth = max(12, (available / windowCount).rounded(.down)) }
         }
         var result: [ObjectIdentifier: CGFloat] = [:]
-        for item in items { result[ObjectIdentifier(item)] = item is WindowButton ? windowWidth : square }
+        for item in items {
+            result[ObjectIdentifier(item)] = item is WindowButton ? windowWidth : item is PermissionButton ? 380 : square
+        }
         return result
     }
 
@@ -184,12 +194,12 @@ final class BarContentView: NSView {
 
     private var drag: DragState?
     /// The newest contents that arrived mid-drag, applied when the drag ends.
-    private var pendingUpdate: (pinned: [String], windows: [TrackedWindow], focusedID: CGWindowID?)?
+    private var pendingUpdate: (pinned: [String], windows: [TrackedWindow], focusedID: CGWindowID?, needsPermission: Bool)?
 
     /// Units only reorder within their own group: pinned slots among pinned slots, windows among windows.
     private static func group(_ kind: BarUnit.Kind) -> Int {
         switch kind {
-        case .start: return 0
+        case .start, .permission: return 0
         case .pinned: return 1
         case .window: return 2
         }
@@ -254,12 +264,13 @@ final class BarContentView: NSView {
                 if case .window(let id) = $0.kind { return id }
                 return nil
             })
-        case .start:
+        case .start, .permission:
             break
         }
         if let pending = pendingUpdate {
             pendingUpdate = nil
-            update(pinned: pending.pinned, windows: pending.windows, focusedID: pending.focusedID)
+            update(pinned: pending.pinned, windows: pending.windows, focusedID: pending.focusedID,
+                   needsPermission: pending.needsPermission)
         }
     }
 
@@ -311,6 +322,15 @@ enum BarMenus {
 
     static func showAbout() {
         WindowActions.activateSelf()
-        NSApp.orderFrontStandardAboutPanel(nil)
+        let info = Bundle.main.infoDictionary ?? [:]
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Strata",
+            .applicationVersion: info["CFBundleShortVersionString"] as? String ?? "",
+            .version: info["CFBundleVersion"] as? String ?? "",
+            .credits: NSAttributedString(
+                string: "A Windows-style taskbar for macOS.",
+                attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+            ),
+        ])
     }
 }

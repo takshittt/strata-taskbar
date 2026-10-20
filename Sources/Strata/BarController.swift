@@ -107,7 +107,8 @@ final class BarController {
         }
         for (id, panel) in panels {
             let shown = settings.windowScope == .allDisplays ? windows : windows.filter { displayOf[$0.id] == id }
-            panel.content.update(pinned: settings.pinnedBundleIDs, windows: shown, focusedID: tracker.focusedID)
+            panel.content.update(pinned: settings.pinnedBundleIDs, windows: shown, focusedID: tracker.focusedID,
+                                 needsPermission: !Permission.shared.isTrusted)
         }
     }
 

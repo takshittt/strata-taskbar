@@ -141,6 +141,35 @@ struct SettingsView: View {
 struct SettingsExtraSections: View {
     var body: some View {
         SnappingSection()
+        SystemSection()
+    }
+}
+
+private struct SystemSection: View {
+    @ObservedObject private var loginItem = LoginItem.shared
+    @ObservedObject private var permission = Permission.shared
+
+    var body: some View {
+        Section("System") {
+            Toggle("Launch at login", isOn: Binding(get: { loginItem.isEnabled }, set: { loginItem.setEnabled($0) }))
+            if let error = loginItem.lastError {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            LabeledContent("Dock") {
+                Button("Move Dock to Left & Auto-hide…") { DockSetup.confirmAndApply() }
+            }
+            LabeledContent("Accessibility") {
+                HStack {
+                    if permission.isTrusted {
+                        Label("Granted", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    } else {
+                        Label("Not granted", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        Button("Open System Settings") { Permission.openSystemSettings() }
+                    }
+                }
+            }
+        }
+        .onAppear { loginItem.refresh() }
     }
 }
 
