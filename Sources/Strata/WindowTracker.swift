@@ -50,6 +50,9 @@ final class WindowTracker {
     /// User-visible order. New windows go to the end.
     private var order: [CGWindowID] = []
     private var observers: [pid_t: AppObservation] = [:]
+    /// When each previously listed window was first missed, for the brief gap during minimise animations.
+    private var missingSince: [CGWindowID: CFAbsoluteTime] = [:]
+    private static let missingGrace: CFAbsoluteTime = 1
     private var refreshPending = false
     private var pollTimer: Timer?
 
@@ -163,10 +166,21 @@ final class WindowTracker {
             }
         }
 
-        let ids = Set(found.map(\.id))
+        // During a minimise animation a window can vanish from AX and the screen for a moment.
+        // Keep a still-existing window for a short grace period so its button doesn't flicker.
+        let alive = Self.allWindowIDs()
+        var ids = Set(found.map(\.id))
+        for id in ids { missingSince[id] = nil }
+        for old in windows where !ids.contains(old.id) && alive.contains(old.id) && inGracePeriod(old.id, now: started) {
+            found.append(old)
+            ids.insert(old.id)
+        }
+        missingSince = missingSince.filter { started - $0.value < Self.missingGrace }
+
         // Forget gone windows so a reused ID gets re-observed (re-adding a live one is a harmless no-op).
         for observation in observers.values { observation.windowIDs.formIntersection(ids) }
-        order.removeAll { !ids.contains($0) }
+        // Windows that still exist (another Space, mid-animation) keep their place for when they return.
+        order.removeAll { !ids.contains($0) && !alive.contains($0) }
         for window in found where !order.contains(window.id) { order.append(window.id) }
         found.sort { (order.firstIndex(of: $0.id) ?? .max) < (order.firstIndex(of: $1.id) ?? .max) }
 
@@ -180,10 +194,28 @@ final class WindowTracker {
         didChange.send()
     }
 
+    private func inGracePeriod(_ id: CGWindowID, now: CFAbsoluteTime) -> Bool {
+        guard let since = missingSince[id] else {
+            // First miss: keep it, and look again once the grace period is over.
+            missingSince[id] = now
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.missingGrace + 0.05) { [weak self] in self?.scheduleRefresh() }
+            return true
+        }
+        return now - since < Self.missingGrace
+    }
+
+    /// Layer-0 window IDs on any Space.
+    private static func allWindowIDs() -> Set<CGWindowID> {
+        windowIDs(CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID))
+    }
+
     /// Layer-0 window IDs on screen right now. Reads only number and layer: no Screen Recording needed.
     private static func onScreenWindowIDs() -> Set<CGWindowID> {
-        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-            as? [[String: Any]] else { return [] }
+        windowIDs(CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID))
+    }
+
+    private static func windowIDs(_ info: CFArray?) -> Set<CGWindowID> {
+        guard let list = info as? [[String: Any]] else { return [] }
         var ids = Set<CGWindowID>()
         for info in list where (info[kCGWindowLayer as String] as? Int) == 0 {
             if let number = info[kCGWindowNumber as String] as? CGWindowID { ids.insert(number) }

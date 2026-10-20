@@ -15,6 +15,9 @@ final class BarPanel: NSPanel {
         isOpaque = false
         hasShadow = false
         backgroundColor = .clear
+        // The blur is composited by the window server, so our pixels are transparent; without this,
+        // clicks on the bar fall through to the window underneath.
+        ignoresMouseEvents = false
         contentView = content
     }
 
@@ -40,6 +43,9 @@ final class BarController {
         Settings.shared.changed
             .debounce(for: .milliseconds(30), scheduler: RunLoop.main)
             .sink { [weak self] in self?.rebuild() }
+            .store(in: &cancellables)
+        WindowTracker.shared.didChange
+            .sink { [weak self] in self?.updateContents() }
             .store(in: &cancellables)
         rebuild()
     }
@@ -68,7 +74,24 @@ final class BarController {
             panel.close()
         }
         panels = live
-        Log.info("bars rebuilt on \(live.count) display(s)")
+        updateContents()
+    }
+
+    /// Pushes the tracker's windows to every bar, filtered by hidden apps and display.
+    func updateContents() {
+        let settings = Settings.shared
+        let tracker = WindowTracker.shared
+        let hidden = Set(settings.hiddenBundleIDs)
+        var windows = tracker.windows.filter { !hidden.contains($0.bundleID ?? "") }
+        if settings.groupByApp { windows = windows.groupedByFirstAppearance { $0.pid } }
+
+        for (id, panel) in panels {
+            let screen = NSScreen.screens.first { ScreenGeometry.displayID($0) == id }
+            let shown = settings.windowScope == .allDisplays || screen == nil
+                ? windows
+                : windows.filter { ScreenGeometry.screen(for: $0.frame) == screen }
+            panel.content.update(windows: shown, focusedID: tracker.focusedID)
+        }
     }
 
     /// Bar frame in Cocoa coordinates: the bottom of the visible frame, so it sits above a bottom Dock.
@@ -76,6 +99,8 @@ final class BarController {
         let visible = screen.visibleFrame
         return CGRect(x: visible.minX, y: visible.minY, width: visible.width, height: barHeight)
     }
+
+    var contentViews: [BarContentView] { panels.values.map(\.content) }
 
     func hasBar(on screen: NSScreen) -> Bool {
         guard let id = ScreenGeometry.displayID(screen) else { return false }
