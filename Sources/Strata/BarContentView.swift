@@ -310,7 +310,7 @@ enum BarMenus {
     }
 
     static func showAbout() {
-        NSApp.activate()
+        WindowActions.activateSelf()
         NSApp.orderFrontStandardAboutPanel(nil)
     }
 }

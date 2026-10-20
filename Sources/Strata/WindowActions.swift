@@ -16,6 +16,15 @@ enum WindowActions {
         WindowTracker.shared.scheduleRefresh()
     }
 
+    /// An accessory app has to activate itself before its windows take keyboard focus. Cooperative
+    /// activation can refuse `NSApp.activate()`, so fall back to the same AX route used for other apps.
+    static func activateSelf() {
+        NSApp.activate()
+        if !NSApp.isActive {
+            AX.set(AX.app(getpid()), kAXFrontmostAttribute, kCFBooleanTrue)
+        }
+    }
+
     static func minimize(_ ref: WindowRef) {
         AX.set(ref.element, kAXMinimizedAttribute, kCFBooleanTrue)
         WindowTracker.shared.scheduleRefresh()
