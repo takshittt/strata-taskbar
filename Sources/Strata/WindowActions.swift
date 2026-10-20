@@ -36,3 +36,74 @@ enum WindowActions {
         }
     }
 }
+
+// MARK: Apps
+
+extension WindowActions {
+    static func runningApp(_ bundleID: String) -> NSRunningApplication? {
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
+    }
+
+    /// Launches the app, or asks a running one to reopen (which usually brings back a window).
+    static func launch(bundleID: String) {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            Log.error("no app found for \(bundleID)")
+            return
+        }
+        launch(url: url)
+    }
+
+    static func launch(url: URL) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
+            if let error { Log.error("launch \(url.lastPathComponent) failed: \(error.localizedDescription)") }
+        }
+    }
+
+    /// Presses the app's "New … Window" menu item, falling back to ⌘N.
+    static func openNewWindow(bundleID: String) {
+        guard let app = runningApp(bundleID) else {
+            launch(bundleID: bundleID)
+            return
+        }
+        let axApp = AX.app(app.processIdentifier)
+        if let item = newWindowMenuItem(axApp) {
+            AX.perform(item, kAXPressAction)
+            AX.set(axApp, kAXFrontmostAttribute, kCFBooleanTrue)
+        } else {
+            AX.set(axApp, kAXFrontmostAttribute, kCFBooleanTrue)
+            postKeystroke(keyCode: 45, flags: .maskCommand, to: app.processIdentifier) // kVK_ANSI_N
+        }
+        WindowTracker.shared.scheduleRefresh()
+    }
+
+    /// Looks through the first few top-level menus (app, File, Shell…) for "New Window" or "New <Something> Window".
+    private static func newWindowMenuItem(_ axApp: AXUIElement) -> AXUIElement? {
+        guard let menuBar = AX.element(axApp, kAXMenuBarAttribute) else { return nil }
+        for barItem in AX.elements(menuBar, kAXChildrenAttribute).dropFirst().prefix(4) {
+            for menu in AX.elements(barItem, kAXChildrenAttribute) {
+                for item in AX.elements(menu, kAXChildrenAttribute) {
+                    let title = AX.string(item, kAXTitleAttribute) ?? ""
+                    guard title == "New Window" || (title.hasPrefix("New ") && title.hasSuffix(" Window")) else { continue }
+                    // Terminal's "New Window" is a submenu of profiles: take the first (default) one.
+                    if let submenu = AX.elements(item, kAXChildrenAttribute).first,
+                       let first = AX.elements(submenu, kAXChildrenAttribute).first {
+                        return first
+                    }
+                    return item
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Posts a key press, to one process if `pid` is given, otherwise system-wide.
+    static func postKeystroke(keyCode: CGKeyCode, flags: CGEventFlags, to pid: pid_t? = nil) {
+        for down in [true, false] {
+            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: down) else { continue }
+            event.flags = flags
+            if let pid { event.postToPid(pid) } else { event.post(tap: .cghidEventTap) }
+        }
+    }
+}

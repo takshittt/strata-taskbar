@@ -12,6 +12,10 @@ enum AppIcons {
         return icon
     }
 
+    static func forget(pid: pid_t) {
+        byPID[pid] = nil
+    }
+
     static func icon(bundleID: String) -> NSImage? {
         if let cached = byBundleID[bundleID] { return cached }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
@@ -82,5 +86,128 @@ final class WindowButton: BarItemView {
             let width = min(bounds.width - 12, showTitle ? bounds.width - 12 : 16)
             NSBezierPath(roundedRect: CGRect(x: (bounds.width - width) / 2, y: 1, width: width, height: 2.5), xRadius: 1.25, yRadius: 1.25).fill()
         }
+    }
+}
+
+/// The Start button: opens the apps menu, Spotlight or Raycast.
+final class StartButton: BarItemView {
+    override var isDraggable: Bool { false }
+    override var tipText: String? { "Start" }
+
+    override func primaryClick() {
+        switch Settings.shared.startAction {
+        case .appsMenu:
+            showAppsMenu()
+        case .spotlight:
+            WindowActions.postKeystroke(keyCode: 49, flags: .maskCommand) // kVK_Space
+        case .raycast:
+            if NSWorkspace.shared.urlForApplication(withBundleIdentifier: AppList.raycastBundleID) != nil {
+                WindowActions.postKeystroke(keyCode: 49, flags: .maskAlternate)
+            } else {
+                showAppsMenu()
+            }
+        }
+    }
+
+    private func showAppsMenu() {
+        AppList.menu().popUp(positioning: nil, at: CGPoint(x: 0, y: bounds.height + 4), in: self)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let configuration = NSImage.SymbolConfiguration(pointSize: (bounds.height * 0.45).rounded(), weight: .semibold)
+            .applying(.init(paletteColors: [.controlAccentColor]))
+        guard let symbol = NSImage(systemSymbolName: "square.grid.2x2.fill", accessibilityDescription: "Start")?
+            .withSymbolConfiguration(configuration) else { return }
+        let size = symbol.size
+        symbol.draw(in: CGRect(x: ((bounds.width - size.width) / 2).rounded(), y: ((bounds.height - size.height) / 2).rounded(),
+                               width: size.width, height: size.height))
+    }
+}
+
+/// A pinned app with no windows on this bar: click to launch (or focus its windows elsewhere).
+final class PinnedButton: BarItemView {
+    let bundleID: String
+
+    init(bundleID: String) {
+        self.bundleID = bundleID
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    var appName: String {
+        if let app = WindowActions.runningApp(bundleID), let name = app.localizedName { return name }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return bundleID }
+        return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+    }
+
+    override var tipText: String? { appName }
+
+    override func primaryClick() {
+        // The app may have windows on another display's bar.
+        if let window = WindowTracker.shared.windows.first(where: { $0.bundleID == bundleID }) {
+            WindowActions.focus(window.ref)
+        } else {
+            WindowActions.launch(bundleID: bundleID)
+        }
+    }
+
+    override func middleClick() {
+        WindowActions.openNewWindow(bundleID: bundleID)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let size = iconSize
+        drawIcon(AppIcons.icon(bundleID: bundleID), x: ((bounds.width - size) / 2).rounded(), size: size)
+        if WindowActions.runningApp(bundleID) != nil {
+            NSColor.secondaryLabelColor.setFill()
+            NSBezierPath(ovalIn: CGRect(x: bounds.midX - 1.5, y: 1, width: 3, height: 3)).fill()
+        }
+    }
+}
+
+/// Installed apps for the Start menu (spec §3.7).
+enum AppList {
+    static let raycastBundleID = "com.raycast.macos"
+
+    private static let directories = [
+        "/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities",
+        NSString(string: "~/Applications").expandingTildeInPath,
+    ]
+
+    struct App {
+        let name: String
+        let url: URL
+    }
+
+    static func apps() -> [App] {
+        let fm = FileManager.default
+        var seen = Set<String>()
+        var apps: [App] = []
+        for directory in directories {
+            guard let names = try? fm.contentsOfDirectory(atPath: directory) else { continue }
+            for name in names where name.hasSuffix(".app") {
+                let url = URL(fileURLWithPath: directory).appendingPathComponent(name)
+                let display = fm.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+                guard seen.insert(display).inserted else { continue }
+                apps.append(App(name: display, url: url))
+            }
+        }
+        return apps.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// One item per app. NSMenu's built-in type-to-select acts as search.
+    static func menu() -> NSMenu {
+        let menu = NSMenu.manual("Apps")
+        for app in apps() {
+            let item = MenuAction(app.name) { WindowActions.launch(url: app.url) }
+            let icon = NSWorkspace.shared.icon(forFile: app.url.path)
+            icon.size = CGSize(width: 16, height: 16)
+            item.image = icon
+            menu.addItem(item)
+        }
+        return menu
     }
 }

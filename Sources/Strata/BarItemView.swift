@@ -100,3 +100,35 @@ class BarItemView: NSView {
 
     var iconSize: CGFloat { min(22, (bounds.height - 8).rounded()) }
 }
+
+/// A menu item that runs a closure. Never `copy()` one: the copy loses the closure.
+final class MenuAction: NSMenuItem {
+    private let handler: () -> Void
+
+    init(_ title: String, enabled: Bool = true, handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(run), keyEquivalent: "")
+        target = self
+        isEnabled = enabled
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    @objc private func run() { handler() }
+}
+
+extension NSMenu {
+    /// A menu that respects each item's `isEnabled` instead of validating against the responder chain.
+    static func manual(_ title: String = "") -> NSMenu {
+        let menu = NSMenu(title: title)
+        menu.autoenablesItems = false
+        return menu
+    }
+
+    /// A disabled item used as a section header.
+    func addHeader(_ title: String) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        addItem(item)
+    }
+}

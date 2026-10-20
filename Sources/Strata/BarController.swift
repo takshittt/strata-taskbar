@@ -44,6 +44,17 @@ final class BarController {
             .debounce(for: .milliseconds(30), scheduler: RunLoop.main)
             .sink { [weak self] in self?.rebuild() }
             .store(in: &cancellables)
+        // Launches and quits without window changes still change the pinned "running" dots.
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                if name == NSWorkspace.didTerminateApplicationNotification,
+                   let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
+                    AppIcons.forget(pid: app.processIdentifier)
+                }
+                self?.updateContents()
+            }
+        }
         WindowTracker.shared.didChange
             .sink { [weak self] in self?.updateContents() }
             .store(in: &cancellables)
@@ -90,7 +101,7 @@ final class BarController {
             let shown = settings.windowScope == .allDisplays || screen == nil
                 ? windows
                 : windows.filter { ScreenGeometry.screen(for: $0.frame) == screen }
-            panel.content.update(windows: shown, focusedID: tracker.focusedID)
+            panel.content.update(pinned: settings.pinnedBundleIDs, windows: shown, focusedID: tracker.focusedID)
         }
     }
 

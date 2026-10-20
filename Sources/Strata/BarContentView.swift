@@ -26,7 +26,9 @@ final class BarContentView: NSView {
     private let separator = SeparatorView()
 
     private(set) var units: [BarUnit] = []
+    private let startButton = StartButton()
     private var windowButtons: [CGWindowID: WindowButton] = [:]
+    private var pinnedButtons: [String: PinnedButton] = [:]
 
     static let padding: CGFloat = 6
     static let spacing: CGFloat = 2
@@ -61,7 +63,9 @@ final class BarContentView: NSView {
     // MARK: Contents
 
     /// Rebuilds the unit list, reusing existing buttons by window ID so nothing flickers.
-    func update(windows: [TrackedWindow], focusedID: CGWindowID?) {
+    /// Order: `[Start] [one slot per pinned app] [unpinned windows]`. A pinned slot shows the app's
+    /// windows on this bar if it has any, otherwise a launcher.
+    func update(pinned: [String], windows: [TrackedWindow], focusedID: CGWindowID?) {
         var used = Set<CGWindowID>()
         func button(for window: TrackedWindow) -> WindowButton {
             used.insert(window.id)
@@ -71,14 +75,32 @@ final class BarContentView: NSView {
             return button
         }
 
-        var next: [BarUnit] = []
-        for window in windows {
+        var next = [BarUnit(kind: .start, items: [startButton])]
+        var usedPins = Set<String>()
+        for bundleID in pinned {
+            let appWindows = windows.filter { $0.bundleID == bundleID }
+            if appWindows.isEmpty {
+                usedPins.insert(bundleID)
+                let launcher = pinnedButtons[bundleID] ?? PinnedButton(bundleID: bundleID)
+                pinnedButtons[bundleID] = launcher
+                launcher.needsDisplay = true
+                next.append(BarUnit(kind: .pinned(bundleID), items: [launcher]))
+            } else {
+                next.append(BarUnit(kind: .pinned(bundleID), items: appWindows.map(button(for:))))
+            }
+        }
+        let pinnedSet = Set(pinned)
+        for window in windows where !pinnedSet.contains(window.bundleID ?? "") {
             next.append(BarUnit(kind: .window(window.id), items: [button(for: window)]))
         }
 
         for (id, button) in windowButtons where !used.contains(id) {
             button.removeFromSuperview()
             windowButtons[id] = nil
+        }
+        for (bundleID, launcher) in pinnedButtons where !usedPins.contains(bundleID) {
+            launcher.removeFromSuperview()
+            pinnedButtons[bundleID] = nil
         }
         units = next
         for unit in units {
