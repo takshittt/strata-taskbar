@@ -166,7 +166,7 @@ Strata/
 | **Screen Recording** | **Not** required. We never read window titles or pixels from CG. |
 | **App Sandbox** | **Off.** AX control of other apps doesn't work in the sandbox, so the **Mac App Store is not an option.** |
 | **Code signing in development** | TCC ties the Accessibility grant to the code signature. Ad-hoc signing (`codesign -s -`) changes with every build, so **macOS forgets the permission after each rebuild.** Fix: create a self-signed "Strata Dev" certificate in Keychain Access and sign every build with it. |
-| **Public distribution** (optional, later) | Apple Developer Program ($99/yr) → *Developer ID Application* certificate → hardened runtime → `notarytool submit` → `stapler staple` → ship as a `.dmg` or `.zip`. |
+| **Public distribution** | **GitHub Releases**, not notarized: the universal release build, signed with "Strata Dev", zipped with `ditto` and attached to each release. On first launch users click **Open Anyway** in System Settings → Privacy & Security, then grant Accessibility. Because every version is signed by the same certificate, the Accessibility grant survives updates, so the "Strata Dev" certificate and its private key must be backed up. Notarization (Apple Developer Program, $99/yr → *Developer ID Application* certificate → hardened runtime → `notarytool submit` → `stapler staple`) would remove the Open Anyway step; not planned for now. |
 | **Private API exposure** | `_AXUIElementGetWindow` (and the optional SkyLight CGS calls) are fine outside the App Store, but they're undocumented and could break in a future macOS. Each one sits behind a single wrapper so it's easy to swap. |
 
 ---

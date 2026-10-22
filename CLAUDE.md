@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Strata** is a Windows-style taskbar for macOS: one button per window, pinned apps, a Start button, window snapping, custom zones.
 
-All 15 build phases (0–14) are implemented; v0.1.0 is tagged. What still needs a person at the keyboard is the manual test matrix (spec §7). Planning docs:
+All 15 build phases (0–14) are implemented. Releases are published on GitHub (https://github.com/takshittt/strata-taskbar/releases), each with a `Strata-<version>.zip` attached. What still needs a person at the keyboard is the manual test matrix (spec §7). Planning docs:
 - [.claude/docs/intent.md](.claude/docs/intent.md): what the app does and why (user-facing)
 - [.claude/docs/spec.md](.claude/docs/spec.md): stack, system APIs per feature, architecture, signing, testing. `§` references in the plan point here.
 - [.claude/docs/plans.md](.claude/docs/plans.md): 15 build phases (0–14), done in order, each with a "✅ Done when" checklist. Don't start a phase until the previous one's checklist passes, and commit at the end of each phase.
@@ -43,6 +43,8 @@ swift test --filter <TestName>                # single test
 /usr/bin/log stream --predicate 'process == "Strata"'  # view logs (full path: zsh has a `log` builtin)
 pkill -x Strata                               # quit from the terminal (or bar right-click → Quit Strata)
 tccutil reset Accessibility local.strata.Strata  # re-test first-launch permission flow
+ditto -c -k --keepParent build/Strata.app build/Strata-<ver>.zip   # package a release build
+gh release create v<ver> build/Strata-<ver>.zip --title "Strata <ver>" --notes-file build/release-notes-<ver>.md
 codesign -dvv build/Strata.app                # should show Authority=Strata Dev
 ```
 
