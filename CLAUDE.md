@@ -18,6 +18,7 @@ All 15 build phases (0–14) are implemented. Releases are published on GitHub (
 - `DebugSnapshot.swift` (DEBUG builds only) listens for distributed notifications so the app can be checked without Screen Recording or moving the user's mouse: `local.strata.debug.snapshot` renders each bar to `/tmp/strata-bar-<n>.png`; `local.strata.debug.click` with object `"<bar>:<item>[:middle|:shift|:spring|:menu[:<n>]|:drag:<dx>|:drop:<path>]"` runs an item's click, menu, drag, file drop or drag-hover; `local.strata.debug.revoke` `"1"`/`"0"` simulates losing Accessibility.
 - `Resources/`: `Info.plist` (copied verbatim) and `AppIcon.icns` (generated: `scripts/make-icon.sh` renders `scripts/make-icon.swift` and runs `iconutil`).
 - `Tests/StrataTests/`: Swift Testing unit tests for the pure logic.
+- `frontend/`: the download website (Vite + React + TypeScript + Tailwind v4, static, for GitHub Pages). It has its own planning docs in `frontend/docs/` (intent, spec, plan). Run `npm run dev` / `npm run build` from inside `frontend/`. Its copy mirrors `README.md`, so update both when features or shortcuts change.
 
 ## Stack and constraints
 

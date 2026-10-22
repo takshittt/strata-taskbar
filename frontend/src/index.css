@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Primary: lavender. 600 is the button fill (5.2:1 with white), 700 is text/links on white (7.1:1). */
+  --color-lavender-50: #f7f5ff;
+  --color-lavender-100: #efeafe;
+  --color-lavender-200: #e0d7fd;
+  --color-lavender-300: #c9b8fa;
+  --color-lavender-400: #a993f3;
+  --color-lavender-500: #8b72ea;
+  --color-lavender-600: #6f58d8;
+  --color-lavender-700: #5b44b8;
+
+  /* Accents. Chartreuse is only ever a fill under dark text (13:1); it's unreadable as text on white.
+     Tomato is a fill/decoration; use tomato-ink when it has to be text on white (4.7:1). */
+  --color-chartreuse: #c8f03c;
+  --color-chartreuse-soft: #f1fbcf;
+  --color-tomato: #ff6347;
+  --color-tomato-ink: #d63a22;
+  --color-tomato-soft: #ffe7e2;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
+}
+
+body {
+  background: #fff;
+  color: var(--color-zinc-900);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
