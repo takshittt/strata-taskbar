@@ -10,7 +10,7 @@ The Mac Dock shows one icon per app. Strata adds a bar at the bottom of your scr
 - **Start button.** Opens a list of your apps.
 - **Pinned apps.** Keep your favourite apps on the bar, even when they're closed.
 - **Snap windows.** Put a window on the left half, right half, a corner and more, with a keyboard shortcut or a right-click.
-- **Custom zones.** Draw your own screen layout. Hold **Shift** while dragging a window to drop it into a zone.
+- **Custom zones.** Draw your own screen layout. Hold **Shift** while dragging a window to drop it into a zone, and add **⌃ Control** to stretch it across several zones.
 - **Multiple monitors.** Each screen gets its own bar.
 
 ## Download

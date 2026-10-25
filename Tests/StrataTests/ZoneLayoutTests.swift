@@ -67,6 +67,15 @@ struct ZoneLayoutTests {
         #expect(CellRange(from: (2, 1), to: (0, 0)) == CellRange(column: 0, row: 0, columnSpan: 3, rowSpan: 2))
     }
 
+    @Test func spanningZones() {
+        let ids = layout.zones.map(\.id)
+        #expect(layout.span([]) == nil)
+        #expect(layout.span([ids[1]]) == layout.zones[1].cells)
+        // Left + Corner: the bounding box is the whole grid.
+        #expect(layout.span([ids[0], ids[2]]) == CellRange(column: 0, row: 0, columnSpan: 3, rowSpan: 2))
+        #expect(layout.span([ids[1], ids[2]]) == CellRange(column: 1, row: 0, columnSpan: 2, rowSpan: 2))
+    }
+
     @Test func layoutsRoundTripThroughJSON() throws {
         var withShortcut = layout
         withShortcut.zones[0].shortcut = Shortcut(keyCode: 18, modifiers: Shortcut.control | Shortcut.option)

@@ -21,6 +21,14 @@ struct CellRange: Codable, Hashable {
                   columnSpan: abs(a.column - b.column) + 1, rowSpan: abs(a.row - b.row) + 1)
     }
 
+    /// The smallest range covering both.
+    func union(_ other: CellRange) -> CellRange {
+        let column = min(self.column, other.column), row = min(self.row, other.row)
+        return CellRange(column: column, row: row,
+                         columnSpan: max(self.column + columnSpan, other.column + other.columnSpan) - column,
+                         rowSpan: max(self.row + rowSpan, other.row + other.rowSpan) - row)
+    }
+
     func overlaps(_ other: CellRange) -> Bool {
         column < other.column + other.columnSpan && other.column < column + columnSpan
             && row < other.row + other.rowSpan && other.row < row + rowSpan
@@ -99,6 +107,11 @@ struct ZoneLayout: Codable, Equatable {
         zones.first { unitRect($0.cells).contains(point) }
     }
 
+    /// The cells covering every zone in `ids` (the bounding box, so it may take in other zones too).
+    func span(_ ids: [UUID]) -> CellRange? {
+        zones.filter { ids.contains($0.id) }.map(\.cells).reduce(nil) { $0?.union($1) ?? $1 }
+    }
+
     func canAdd(_ cells: CellRange) -> Bool {
         cells.column + cells.columnSpan <= columns.count && cells.row + cells.rowSpan <= rows.count
             && !zones.contains { $0.cells.overlaps(cells) }
@@ -166,7 +179,12 @@ final class ZoneStore: ObservableObject {
 extension WindowMover {
     /// Moves a window into a zone on the given display (which may not be the window's current one).
     static func move(_ ref: WindowRef, to zone: Zone, in layout: ZoneLayout, on screen: NSScreen) {
-        let frame = SnapAction.place(layout.unitRect(zone.cells), in: ScreenGeometry.axWorkArea(screen),
+        move(ref, to: zone.cells, in: layout, on: screen)
+    }
+
+    /// Moves a window to fill a range of cells, such as several zones spanned by a drag.
+    static func move(_ ref: WindowRef, to cells: CellRange, in layout: ZoneLayout, on screen: NSScreen) {
+        let frame = SnapAction.place(layout.unitRect(cells), in: ScreenGeometry.axWorkArea(screen),
                                      gap: CGFloat(Settings.shared.windowGap))
         apply(ref, frame)
     }
@@ -209,22 +227,27 @@ extension WindowMover {
 
 // MARK: Overlays
 
-/// Draws a layout's zones over a display's work area, with one zone highlighted.
+/// Draws a layout's zones over a display's work area, highlighting the target cells.
 private final class ZoneOverlayView: NSView {
     var layout = ZoneLayout.default
     /// Work area in this view's coordinates.
     var workArea = CGRect.zero
-    var highlighted: UUID?
+    /// The cells the window will fill; zones inside them are highlighted.
+    var highlighted: CellRange?
+
+    private func frame(of cells: CellRange) -> CGRect {
+        let unit = layout.unitRect(cells)
+        return CGRect(x: workArea.minX + unit.minX * workArea.width,
+                      y: workArea.maxY - unit.maxY * workArea.height,
+                      width: unit.width * workArea.width, height: unit.height * workArea.height)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         let accent = NSColor.controlAccentColor
         for zone in layout.zones {
-            let unit = layout.unitRect(zone.cells)
-            let rect = CGRect(x: workArea.minX + unit.minX * workArea.width,
-                              y: workArea.maxY - unit.maxY * workArea.height,
-                              width: unit.width * workArea.width, height: unit.height * workArea.height).insetBy(dx: 6, dy: 6)
+            let rect = frame(of: zone.cells).insetBy(dx: 6, dy: 6)
             let path = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
-            let isHighlighted = zone.id == highlighted
+            let isHighlighted = highlighted?.overlaps(zone.cells) ?? false
             accent.withAlphaComponent(isHighlighted ? 0.45 : 0.15).setFill()
             path.fill()
             accent.withAlphaComponent(0.9).setStroke()
@@ -240,6 +263,14 @@ private final class ZoneOverlayView: NSView {
             let size = zone.name.size(withAttributes: attributes)
             zone.name.draw(at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2), withAttributes: attributes)
         }
+
+        // When the target spans several zones, outline the frame the window will get.
+        if let highlighted, !layout.zones.contains(where: { $0.cells == highlighted }) {
+            let path = NSBezierPath(roundedRect: frame(of: highlighted).insetBy(dx: 2, dy: 2), xRadius: 12, yRadius: 12)
+            path.lineWidth = 4
+            accent.setStroke()
+            path.stroke()
+        }
     }
 }
 
@@ -249,7 +280,7 @@ final class ZoneOverlay {
     private let view = ZoneOverlayView()
     private var hideTimer: Timer?
 
-    func show(_ layout: ZoneLayout, on screen: NSScreen, highlighted: UUID?) {
+    func show(_ layout: ZoneLayout, on screen: NSScreen, highlighted: CellRange?) {
         hideTimer?.invalidate()
         let panel = self.panel ?? makePanel()
         self.panel = panel
@@ -288,6 +319,8 @@ final class ZoneOverlay {
 }
 
 /// Shift-drag a window to show the zones under the cursor; release to drop it into the highlighted zone.
+/// Also holding ⌃ spans every zone the cursor passes over. Press it once the drag has started:
+/// ⌃ held at mouse-down turns the click into a right-click.
 final class ZoneGridOverlay {
     static let shared = ZoneGridOverlay()
 
@@ -299,7 +332,9 @@ final class ZoneGridOverlay {
     /// True once the window is actually moving (not a shift-drag inside its content).
     private var windowMoving = false
     private var lastProbe: CFAbsoluteTime = 0
-    private var target: (screen: NSScreen, layout: ZoneLayout, zone: Zone?)?
+    private var target: (screen: NSScreen, layout: ZoneLayout, cells: CellRange?)?
+    /// Zones touched while ⌃ is held, in order, on `target`'s screen.
+    private var spanned: [UUID] = []
 
     func start() {
         monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .flagsChanged]) {
@@ -330,12 +365,17 @@ final class ZoneGridOverlay {
             }
             updateTarget(at: NSEvent.mouseLocation)
         case .flagsChanged:
-            if !event.modifierFlags.contains(.shift), target != nil { clearTarget() }
+            if !event.modifierFlags.contains(.shift) {
+                if target != nil { clearTarget() }
+            } else if windowMoving {
+                // ⌃ pressed or released mid-drag: redraw without waiting for the mouse to move.
+                updateTarget(at: NSEvent.mouseLocation)
+            }
         case .leftMouseUp:
-            if let target, let zone = target.zone, let ref = dragged {
+            if let target, let cells = target.cells, let ref = dragged {
                 // Let the app finish its own drag before we move the window.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    WindowMover.move(ref, to: zone, in: target.layout, on: target.screen)
+                    WindowMover.move(ref, to: cells, in: target.layout, on: target.screen)
                 }
             }
             reset()
@@ -352,12 +392,22 @@ final class ZoneGridOverlay {
         let area = ScreenGeometry.workArea(screen)
         let unit = CGPoint(x: (point.x - area.minX) / area.width, y: (area.maxY - point.y) / area.height)
         let zone = layout.zone(atUnit: unit)
-        target = (screen, layout, zone)
-        overlay.show(layout, on: screen, highlighted: zone?.id)
+        var cells = zone?.cells
+        if NSEvent.modifierFlags.contains(.control) {
+            if target?.screen != screen { spanned = [] }
+            if let zone, !spanned.contains(zone.id) { spanned.append(zone.id) }
+            // Between zones, keep the span gathered so far.
+            cells = layout.span(spanned) ?? cells
+        } else {
+            spanned = []
+        }
+        target = (screen, layout, cells)
+        overlay.show(layout, on: screen, highlighted: cells)
     }
 
     private func clearTarget() {
         target = nil
+        spanned = []
         overlay.hide()
     }
 

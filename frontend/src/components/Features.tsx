@@ -30,7 +30,7 @@ const features = [
   },
   {
     title: 'Custom zones',
-    body: 'Draw your own screen layout. Hold Shift while dragging a window to drop it into a zone.',
+    body: 'Draw your own screen layout. Hold Shift while dragging a window to drop it into a zone, and add ⌃ Control to stretch it across several zones.',
     icon: icon(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14 4v16M14 12h7" /></>),
   },
   {
