@@ -70,34 +70,25 @@ final class WindowButton: BarItemView {
 
     override func contextMenu() -> NSMenu? {
         let window = tracked
-        let settings = Settings.shared
         let menu = NSMenu.manual()
-        let header = window.title.isEmpty ? window.appName : window.title
-        menu.addHeader(header.count > 60 ? String(header.prefix(59)) + "…" : header)
-        menu.addItem(.separator())
+        BarMenus.addRecentsAndWindows(to: menu, pid: window.pid)
 
-        if window.isMinimized {
-            menu.addItem(MenuAction("Restore") { WindowActions.focus(window.ref) })
-        } else {
-            menu.addItem(MenuAction("Minimize") { WindowActions.minimize(window.ref) })
-        }
         if let bundleID = window.bundleID {
             menu.addItem(MenuAction("New Window") { WindowActions.openNewWindow(bundleID: bundleID) })
+        }
+        if window.isMinimized {
+            menu.addItem(MenuAction("Restore Window") { WindowActions.focus(window.ref) })
+        } else {
+            menu.addItem(MenuAction("Minimize Window") { WindowActions.minimize(window.ref) })
         }
         menu.addItem(MenuAction("Close Window") { WindowActions.close(window.ref) })
         BarMenus.addWindowSubmenus(to: menu, window: window)
 
         if let bundleID = window.bundleID {
             menu.addItem(.separator())
-            if settings.isPinned(bundleID) {
-                menu.addItem(MenuAction("Unpin \(window.appName)") { settings.unpin(bundleID) })
-            } else {
-                menu.addItem(MenuAction("Pin \(window.appName)") { settings.pin(bundleID) })
-            }
-            menu.addItem(MenuAction("Hide \(window.appName) from Bar") { settings.hide(bundleID) })
+            menu.addItem(BarMenus.optionsMenuItem(bundleID: bundleID, appName: window.appName, allowHide: true))
         }
-        menu.addItem(.separator())
-        menu.addItem(MenuAction("Quit \(window.appName)") { WindowActions.quit(pid: window.pid) })
+        BarMenus.addHideAndQuit(to: menu, app: NSRunningApplication(processIdentifier: window.pid), appName: window.appName)
         return menu
     }
 
@@ -178,13 +169,18 @@ final class StartButton: BarItemView {
 }
 
 /// A pinned app with no windows on this bar: click to launch (or focus its windows elsewhere).
+/// Also used, unpinned, for a running app with no windows; that one stays where it is.
 final class PinnedButton: BarItemView {
     let bundleID: String
+    let isPinned: Bool
 
-    init(bundleID: String) {
+    init(bundleID: String, isPinned: Bool = true) {
         self.bundleID = bundleID
+        self.isPinned = isPinned
         super.init(frame: .zero)
     }
+
+    override var isDraggable: Bool { isPinned }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
@@ -217,15 +213,13 @@ final class PinnedButton: BarItemView {
 
     override func contextMenu() -> NSMenu? {
         let bundleID = bundleID
+        let app = WindowActions.runningApp(bundleID)
         let menu = NSMenu.manual()
-        menu.addHeader(appName)
+        BarMenus.addRecentsAndWindows(to: menu, pid: app?.processIdentifier)
+        menu.addItem(MenuAction(app == nil ? "Open" : "New Window") { WindowActions.openNewWindow(bundleID: bundleID) })
         menu.addItem(.separator())
-        menu.addItem(MenuAction("New Window") { WindowActions.openNewWindow(bundleID: bundleID) })
-        menu.addItem(MenuAction("Unpin") { Settings.shared.unpin(bundleID) })
-        if let app = WindowActions.runningApp(bundleID) {
-            menu.addItem(.separator())
-            menu.addItem(MenuAction("Quit \(appName)") { app.terminate() })
-        }
+        menu.addItem(BarMenus.optionsMenuItem(bundleID: bundleID, appName: appName, allowHide: false))
+        BarMenus.addHideAndQuit(to: menu, app: app, appName: appName)
         return menu
     }
 

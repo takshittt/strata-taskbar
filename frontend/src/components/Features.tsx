@@ -10,7 +10,7 @@ const icon = (path: ReactNode) => (
 const features = [
   {
     title: 'One button per window',
-    body: 'Every open window gets its own button. Click to switch to it, click again to minimise it. Drag buttons to reorder them.',
+    body: 'Every open window gets its own button. Click to switch to it, click again to minimise it. Right-click for the app’s recent files and other windows, like the Dock. Drag buttons to reorder them.',
     icon: icon(<><rect x="3" y="15" width="18" height="6" rx="1.5" /><path d="M6 18h3M11 18h3M16 18h2" /></>),
   },
   {

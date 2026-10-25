@@ -105,10 +105,20 @@ final class BarController {
                 displayOf[window.id] = ScreenGeometry.screen(for: window.frame).flatMap(ScreenGeometry.displayID)
             }
         }
+        // Running apps with no windows at all (closed, not quit) keep an icon, as on Windows. Finder always runs.
+        let withWindows = Set(tracker.windows.map(\.pid))
+        let ownPID = getpid()
+        var running: [String] = []
+        for app in NSWorkspace.shared.runningApplications
+        where app.activationPolicy == .regular && app.processIdentifier != ownPID && !withWindows.contains(app.processIdentifier) {
+            guard let bundleID = app.bundleIdentifier, bundleID != "com.apple.finder", !hidden.contains(bundleID),
+                  !running.contains(bundleID) else { continue }
+            running.append(bundleID)
+        }
         for (id, panel) in panels {
             let shown = settings.windowScope == .allDisplays ? windows : windows.filter { displayOf[$0.id] == id }
-            panel.content.update(pinned: settings.pinnedBundleIDs, windows: shown, focusedID: tracker.focusedID,
-                                 needsPermission: !Permission.shared.isTrusted)
+            panel.content.update(pinned: settings.pinnedBundleIDs, windows: shown, running: running,
+                                 focusedID: tracker.focusedID, needsPermission: !Permission.shared.isTrusted)
         }
     }
 

@@ -230,6 +230,8 @@ final class HoverTip {
     private static let delay: TimeInterval = 0.6
     /// Moving to another item within this long of the tip hiding shows the next tip at once.
     private static let switchWindow: TimeInterval = 0.3
+    private static let cornerRadius: CGFloat = 7
+    private static let padding = CGSize(width: 12, height: 5)
 
     private let panel: NSPanel
     private let label = NSTextField(labelWithString: "")
@@ -246,14 +248,20 @@ final class HoverTip {
         panel.backgroundColor = .clear
         panel.hasShadow = true
 
+        // Styled like the Dock's app-name labels: a rounded, translucent popover-material
+        // plate with a hairline border and regular-size text, following light/dark mode.
         let background = NSVisualEffectView()
-        background.material = .toolTip
+        background.material = .popover
+        background.blendingMode = .behindWindow
         background.state = .active
         background.wantsLayer = true
-        background.layer?.cornerRadius = 6
+        background.layer?.cornerRadius = Self.cornerRadius
+        background.layer?.cornerCurve = .continuous
         background.layer?.masksToBounds = true
-        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        label.lineBreakMode = .byTruncatingTail
+        background.layer?.borderWidth = 0.5
+        label.font = .systemFont(ofSize: NSFont.systemFontSize)
+        label.textColor = .labelColor
+        label.lineBreakMode = .byClipping
         background.addSubview(label)
         panel.contentView = background
     }
@@ -290,16 +298,39 @@ final class HoverTip {
             return
         }
         label.stringValue = text
-        let size = label.intrinsicContentSize
-        let width = min(ceil(size.width) + 16, 600)
-        let height = ceil(size.height) + 8
-        label.frame = CGRect(x: 8, y: 4, width: width - 16, height: ceil(size.height))
+        let pad = Self.padding
+        // Measure the cell directly (the label's intrinsic size can be stale before layout)
+        // and add a little slack so the full name always fits.
+        let size = label.cell?.cellSize ?? label.intrinsicContentSize
+        let width = min(ceil(size.width) + 2 + pad.width * 2, 600)
+        let height = ceil(size.height) + pad.height * 2
+        label.frame = CGRect(x: pad.width, y: pad.height, width: width - pad.width * 2, height: ceil(size.height))
+
+        // The border colour is a CGColor, so resolve it against the current appearance each time.
+        if let background = panel.contentView {
+            background.effectiveAppearance.performAsCurrentDrawingAppearance {
+                background.layer?.borderColor = NSColor.separatorColor.cgColor
+            }
+        }
 
         let anchor = window.convertToScreen(item.convert(item.bounds, to: nil))
         let visible = screen.frame
         var x = anchor.midX - width / 2
         x = min(max(x, visible.minX + 4), visible.maxX - width - 4)
-        panel.setFrame(CGRect(x: x, y: anchor.maxY + 8, width: width, height: height), display: true)
+        panel.setFrame(CGRect(x: x, y: anchor.maxY + 10, width: width, height: height), display: true)
+
+        // Fade in on first appearance; when sliding between items, just move.
+        if panel.isVisible {
+            panel.alphaValue = 1
+        } else {
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.12
+                panel.animator().alphaValue = 1
+            }
+            return
+        }
         panel.orderFrontRegardless()
     }
 }

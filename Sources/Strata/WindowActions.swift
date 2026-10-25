@@ -155,22 +155,63 @@ extension WindowActions {
 
 // MARK: Apps without windows
 
+// Private, but long-standing (yabai relies on them). Only `isRealWindow` and `currentSpaces` use these.
+@_silgen_name("CGSMainConnectionID")
+private func CGSMainConnectionID() -> Int32
+@_silgen_name("CGSWindowIsOrderedIn")
+private func CGSWindowIsOrderedIn(_ connection: Int32, _ windowID: CGWindowID, _ orderedIn: UnsafeMutablePointer<Bool>) -> Int32
+@_silgen_name("CGSCopySpacesForWindows")
+private func CGSCopySpacesForWindows(_ connection: Int32, _ mask: Int32, _ windowIDs: CFArray) -> Unmanaged<CFArray>?
+@_silgen_name("CGSCopyManagedDisplaySpaces")
+private func CGSCopyManagedDisplaySpaces(_ connection: Int32) -> Unmanaged<CFArray>?
+
 extension WindowActions {
-    /// Regular apps with no real window (layer 0, at least 60×60) on any Space. Finder is never included.
+    /// Regular apps with no real window anywhere. Finder is never included.
+    ///
+    /// Many apps (Claude, WhatsApp, Chrome, …) keep their last window after it is closed, just ordered
+    /// out, so it still shows up in the window list. A real window is one that is ordered in, or sits
+    /// on a Space that isn't showing, or that AX lists (which covers minimised windows and hidden apps).
     static func appsWithoutWindows() -> [NSRunningApplication] {
+        let connection = CGSMainConnectionID()
+        let showing = currentSpaces(connection)
         var pidsWithWindows = Set<pid_t>()
         let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
         for info in list where (info[kCGWindowLayer as String] as? Int) == 0 {
-            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t,
+            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t, !pidsWithWindows.contains(pid),
+                  let id = info[kCGWindowNumber as String] as? CGWindowID,
                   let bounds = info[kCGWindowBounds as String] as? NSDictionary,
                   let rect = CGRect(dictionaryRepresentation: bounds),
-                  rect.width >= 60, rect.height >= 60 else { continue }
+                  rect.width >= 60, rect.height >= 60,
+                  isRealWindow(id, connection: connection, showing: showing) else { continue }
             pidsWithWindows.insert(pid)
         }
         let ownPID = getpid()
         return NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular && $0.processIdentifier != ownPID
                 && $0.bundleIdentifier != "com.apple.finder" && !pidsWithWindows.contains($0.processIdentifier)
+                && !hasAXWindow($0.processIdentifier)
+        }
+    }
+
+    private static func isRealWindow(_ id: CGWindowID, connection: Int32, showing: Set<Int>) -> Bool {
+        var orderedIn = false
+        if CGSWindowIsOrderedIn(connection, id, &orderedIn) == 0, orderedIn { return true }
+        // Mask 7: current, other and fixed Spaces. A window on a Space that isn't showing is kept,
+        // since it may simply be over there.
+        let spaces = CGSCopySpacesForWindows(connection, 7, [id] as CFArray)?.takeRetainedValue() as? [Int] ?? []
+        return spaces.contains { !showing.contains($0) }
+    }
+
+    /// The Space showing on each display.
+    private static func currentSpaces(_ connection: Int32) -> Set<Int> {
+        let displays = CGSCopyManagedDisplaySpaces(connection)?.takeRetainedValue() as? [[String: Any]] ?? []
+        return Set(displays.compactMap { ($0["Current Space"] as? [String: Any])?["ManagedSpaceID"] as? Int })
+    }
+
+    private static func hasAXWindow(_ pid: pid_t) -> Bool {
+        AX.elements(AX.app(pid), kAXWindowsAttribute).contains {
+            let subrole = AX.string($0, kAXSubroleAttribute)
+            return subrole == kAXStandardWindowSubrole || subrole == kAXDialogSubrole
         }
     }
 
@@ -183,5 +224,49 @@ extension WindowActions {
 
     static func quit(pid: pid_t) {
         NSRunningApplication(processIdentifier: pid)?.terminate()
+    }
+}
+
+// MARK: Recent items
+
+extension WindowActions {
+    struct RecentItem {
+        let title: String
+        /// Set when the menu shows a path (VS Code and other Electron apps do), so the item can get a file icon.
+        let path: String?
+        let element: AXUIElement
+    }
+
+    /// The entries of the app's File ▸ Open Recent menu, read through AX. (The Dock's own per-app
+    /// recents list lives in a file that needs Full Disk Access, which Strata doesn't ask for.)
+    static func recentItems(pid: pid_t, limit: Int = 12) -> [RecentItem] {
+        guard let menuBar = AX.element(AX.app(pid), kAXMenuBarAttribute) else { return [] }
+        for barItem in AX.elements(menuBar, kAXChildrenAttribute).dropFirst().prefix(4) {
+            for menu in AX.elements(barItem, kAXChildrenAttribute) {
+                for item in AX.elements(menu, kAXChildrenAttribute) {
+                    guard AX.string(item, kAXTitleAttribute)?.hasPrefix("Open Recent") == true,
+                          let submenu = AX.elements(item, kAXChildrenAttribute).first else { continue }
+                    return Array(AX.elements(submenu, kAXChildrenAttribute).compactMap(recentItem).prefix(limit))
+                }
+            }
+        }
+        return []
+    }
+
+    private static func recentItem(_ element: AXUIElement) -> RecentItem? {
+        guard let title = AX.string(element, kAXTitleAttribute), !title.isEmpty,
+              AX.bool(element, kAXEnabledAttribute) != false,
+              !["Clear", "More", "Reopen"].contains(where: { title.hasPrefix($0) }) else { return nil }
+        guard title.hasPrefix("/") || title.hasPrefix("~/") else {
+            return RecentItem(title: title, path: nil, element: element)
+        }
+        let path = (title as NSString).expandingTildeInPath
+        return RecentItem(title: (path as NSString).lastPathComponent, path: path, element: element)
+    }
+
+    static func open(_ recent: RecentItem, pid: pid_t) {
+        AX.perform(recent.element, kAXPressAction)
+        AX.set(AX.app(pid), kAXFrontmostAttribute, kCFBooleanTrue)
+        WindowTracker.shared.scheduleRefresh()
     }
 }

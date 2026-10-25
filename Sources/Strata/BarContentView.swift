@@ -9,11 +9,13 @@ private final class SeparatorView: NSView {
 }
 
 /// A run of items that moves as one when dragged: the Start button, a pinned slot, or an unpinned window.
+/// A running unpinned app with no windows gets a slot too, but it doesn't move.
 struct BarUnit {
     enum Kind: Equatable {
         case start
         case pinned(String)
         case window(CGWindowID)
+        case running(String)
         case permission
     }
 
@@ -31,6 +33,7 @@ final class BarContentView: NSView {
     private let permissionButton = PermissionButton()
     private var windowButtons: [CGWindowID: WindowButton] = [:]
     private var pinnedButtons: [String: PinnedButton] = [:]
+    private var runningButtons: [String: PinnedButton] = [:]
 
     static let padding: CGFloat = 6
     static let spacing: CGFloat = 2
@@ -66,12 +69,13 @@ final class BarContentView: NSView {
     // MARK: Contents
 
     /// Rebuilds the unit list, reusing existing buttons by window ID so nothing flickers.
-    /// Order: `[Start] [one slot per pinned app] [unpinned windows]`. A pinned slot shows the app's
-    /// windows on this bar if it has any, otherwise a launcher.
+    /// Order: `[Start] [one slot per pinned app] [unpinned windows] [running unpinned apps without windows]`.
+    /// A pinned slot shows the app's windows on this bar if it has any, otherwise a launcher.
     /// Without Accessibility the bar shows only Start and a prompt to grant it.
-    func update(pinned: [String], windows: [TrackedWindow], focusedID: CGWindowID?, needsPermission: Bool = false) {
+    func update(pinned: [String], windows: [TrackedWindow], running: [String] = [], focusedID: CGWindowID?,
+                needsPermission: Bool = false) {
         guard drag == nil else {
-            pendingUpdate = (pinned, windows, focusedID, needsPermission)
+            pendingUpdate = (pinned, windows, running, focusedID, needsPermission)
             return
         }
         var used = Set<CGWindowID>()
@@ -106,6 +110,14 @@ final class BarContentView: NSView {
         for window in windows where !needsPermission && !pinnedSet.contains(window.bundleID ?? "") {
             next.append(BarUnit(kind: .window(window.id), items: [button(for: window)]))
         }
+        var usedRunning = Set<String>()
+        for bundleID in needsPermission ? [] : running where !pinnedSet.contains(bundleID) {
+            usedRunning.insert(bundleID)
+            let launcher = runningButtons[bundleID] ?? PinnedButton(bundleID: bundleID, isPinned: false)
+            runningButtons[bundleID] = launcher
+            launcher.needsDisplay = true
+            next.append(BarUnit(kind: .running(bundleID), items: [launcher]))
+        }
 
         for (id, button) in windowButtons where !used.contains(id) {
             button.removeFromSuperview()
@@ -114,6 +126,10 @@ final class BarContentView: NSView {
         for (bundleID, launcher) in pinnedButtons where !usedPins.contains(bundleID) {
             launcher.removeFromSuperview()
             pinnedButtons[bundleID] = nil
+        }
+        for (bundleID, launcher) in runningButtons where !usedRunning.contains(bundleID) {
+            launcher.removeFromSuperview()
+            runningButtons[bundleID] = nil
         }
         units = next
         for unit in units {
@@ -195,7 +211,8 @@ final class BarContentView: NSView {
 
     private var drag: DragState?
     /// The newest contents that arrived mid-drag, applied when the drag ends.
-    private var pendingUpdate: (pinned: [String], windows: [TrackedWindow], focusedID: CGWindowID?, needsPermission: Bool)?
+    private var pendingUpdate: (pinned: [String], windows: [TrackedWindow], running: [String], focusedID: CGWindowID?,
+                                needsPermission: Bool)?
 
     /// Units only reorder within their own group: pinned slots among pinned slots, windows among windows.
     private static func group(_ kind: BarUnit.Kind) -> Int {
@@ -203,6 +220,7 @@ final class BarContentView: NSView {
         case .start, .permission: return 0
         case .pinned: return 1
         case .window: return 2
+        case .running: return 3
         }
     }
 
@@ -265,13 +283,13 @@ final class BarContentView: NSView {
                 if case .window(let id) = $0.kind { return id }
                 return nil
             })
-        case .start, .permission:
+        case .start, .permission, .running:
             break
         }
         if let pending = pendingUpdate {
             pendingUpdate = nil
-            update(pinned: pending.pinned, windows: pending.windows, focusedID: pending.focusedID,
-                   needsPermission: pending.needsPermission)
+            update(pinned: pending.pinned, windows: pending.windows, running: pending.running,
+                   focusedID: pending.focusedID, needsPermission: pending.needsPermission)
         }
     }
 
@@ -339,6 +357,68 @@ enum BarMenus {
         menu.addItem(MenuAction("About Strata") { showAbout() })
         menu.addItem(MenuAction("Quit Strata") { NSApp.terminate(nil) })
         return menu
+    }
+
+    /// The Dock-style top of an app's menu: its recent items, then its windows on this Space
+    /// (the focused one ticked). Adds nothing for an app that isn't running.
+    static func addRecentsAndWindows(to menu: NSMenu, pid: pid_t?) {
+        guard let pid else { return }
+        let recents = WindowActions.recentItems(pid: pid)
+        for recent in recents {
+            let item = MenuAction(recent.title) { WindowActions.open(recent, pid: pid) }
+            let icon: NSImage
+            if let path = recent.path {
+                item.toolTip = path
+                icon = NSWorkspace.shared.icon(forFile: path)
+            } else {
+                icon = NSWorkspace.shared.icon(for: .data)
+            }
+            icon.size = CGSize(width: 16, height: 16)
+            item.image = icon
+            menu.addItem(item)
+        }
+        if !recents.isEmpty { menu.addItem(.separator()) }
+
+        let tracker = WindowTracker.shared
+        let windows = tracker.windows.filter { $0.pid == pid }
+        for window in windows {
+            let title = window.title.isEmpty ? window.appName : window.title
+            let item = MenuAction(title.count > 60 ? String(title.prefix(59)) + "…" : title) { WindowActions.focus(window.ref) }
+            item.state = window.id == tracker.focusedID ? .on : .off
+            menu.addItem(item)
+        }
+        if !windows.isEmpty { menu.addItem(.separator()) }
+    }
+
+    /// The Options submenu shared by window and pinned buttons: pin, hide from the bar, show in Finder.
+    static func optionsMenuItem(bundleID: String, appName: String, allowHide: Bool) -> NSMenuItem {
+        let settings = Settings.shared
+        let options = NSMenu.manual("Options")
+        if settings.isPinned(bundleID) {
+            options.addItem(MenuAction("Unpin \(appName)") { settings.unpin(bundleID) })
+        } else {
+            options.addItem(MenuAction("Pin \(appName)") { settings.pin(bundleID) })
+        }
+        if allowHide {
+            options.addItem(MenuAction("Hide \(appName) from Bar") { settings.hide(bundleID) })
+        }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            options.addItem(.separator())
+            options.addItem(MenuAction("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) })
+        }
+        let item = NSMenuItem(title: "Options", action: nil, keyEquivalent: "")
+        item.submenu = options
+        return item
+    }
+
+    /// Hide and Quit for a running app.
+    static func addHideAndQuit(to menu: NSMenu, app: NSRunningApplication?, appName: String) {
+        guard let app else { return }
+        menu.addItem(.separator())
+        menu.addItem(app.isHidden
+            ? MenuAction("Show \(appName)") { app.unhide() }
+            : MenuAction("Hide \(appName)") { app.hide() })
+        menu.addItem(MenuAction("Quit \(appName)") { app.terminate() })
     }
 
     static func addWindowSubmenus(to menu: NSMenu, window: TrackedWindow) {

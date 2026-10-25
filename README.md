@@ -6,7 +6,7 @@ The Mac Dock shows one icon per app. Strata adds a bar at the bottom of your scr
 
 ## What it does
 
-- **One button per window.** Click to switch, click again to minimise.
+- **One button per window.** Click to switch, click again to minimise. Right-click for the app's recent files and its other windows, like the Dock.
 - **Start button.** Opens a list of your apps.
 - **Pinned apps.** Keep your favourite apps on the bar, even when they're closed.
 - **Snap windows.** Put a window on the left half, right half, a corner and more, with a keyboard shortcut or a right-click.
